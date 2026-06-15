@@ -1,6 +1,39 @@
 [package]
 name = "crypto-orderbook"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+# Async runtime — use full during dev, narrow features before prod
+tokio = { version = "1", features = ["full"] }
+
+# WebSocket — async wrapper around tungstenite, integrates with tokio I/O
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+
+# Stream/sink combinators for WebSocket frames
+futures-util = "0.3"
+
+# Serialization — derive on serde to get #[derive(Deserialize, Serialize)]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Exact decimal arithmetic — never use f64 for financial prices
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+
+# Typed error enums with std::error::Error derive
+thiserror = "1"
+
+# Tokio-native HTTP framework
+axum = "0.7"
+
+# Structured async-aware logging with task span context
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Typed URL construction
+url = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

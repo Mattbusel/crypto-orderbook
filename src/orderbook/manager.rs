@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use crate::error::{AppError, Result};
+use crate::metrics;
 use crate::orderbook::book::OrderBook;
 use crate::ws::binance::{parse_depth_update, DepthUpdate, PriceLevel};
 use crate::ws::WsEvent;
@@ -102,6 +103,7 @@ impl Manager {
             // Phase 3: Live mode. Apply every event, validating sequence continuity.
             match self.run_live(first_last_id).await {
                 LiveResult::SequenceGap { expected, got } => {
+                    metrics::SEQUENCE_GAPS_TOTAL.inc();
                     error!(expected, got, "sequence gap detected, resyncing");
                 }
                 LiveResult::Reconnected => {
@@ -127,7 +129,10 @@ impl Manager {
         let mut attempt = 0u32;
         loop {
             match self.fetch_snapshot().await {
-                Ok(snap) => return snap,
+                Ok(snap) => {
+                    metrics::SNAPSHOTS_TOTAL.inc();
+                    return snap;
+                }
                 Err(e) => {
                     let wait_secs = 2u64.saturating_pow(attempt).min(30);
                     error!(error = %e, wait_secs, "snapshot fetch failed, retrying");
@@ -257,10 +262,20 @@ impl Manager {
                         };
                     }
 
-                    self.book
-                        .write()
-                        .expect("book lock poisoned")
-                        .apply(&update);
+                    {
+                        let mut book = self.book.write().expect("book lock poisoned");
+                        book.apply(&update);
+                        metrics::UPDATES_APPLIED_TOTAL.inc();
+                        metrics::WS_EVENTS_TOTAL.inc();
+                        metrics::BID_DEPTH.set(book.bid_depth() as f64);
+                        metrics::ASK_DEPTH.set(book.ask_depth() as f64);
+                        if let Some(s) = book.spread() {
+                            use rust_decimal::prelude::ToPrimitive;
+                            if let Some(f) = s.to_f64() {
+                                metrics::SPREAD.set(f);
+                            }
+                        }
+                    }
 
                     prev_last_id = update.last_update_id;
                 }

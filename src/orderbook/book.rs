@@ -104,6 +104,40 @@ impl OrderBook {
     pub fn ask_depth(&self) -> usize {
         self.asks.len()
     }
+
+    /// Liquidity-weighted mid-price (micro-price).
+    ///
+    /// Unlike the arithmetic midpoint (bid+ask)/2, micro-price weights each
+    /// side by the other side's quantity. If bid liquidity is 3x ask liquidity,
+    /// the micro-price is pulled 75% of the way toward the ask. This is because
+    /// heavy bid-side liquidity implies upward price pressure.
+    ///
+    /// Formula: (ask_price * bid_qty + bid_price * ask_qty) / (bid_qty + ask_qty)
+    pub fn micro_price(&self) -> Option<Decimal> {
+        let bid = self.best_bid()?;
+        let ask = self.best_ask()?;
+        let total_qty = bid.quantity + ask.quantity;
+        if total_qty.is_zero() {
+            return None;
+        }
+        Some((ask.price * bid.quantity + bid.price * ask.quantity) / total_qty)
+    }
+
+    /// Order book depth imbalance across the top `n` levels.
+    ///
+    /// Returns (bid_qty - ask_qty) / (bid_qty + ask_qty).
+    /// Range: -1.0 (all ask volume, bearish) to +1.0 (all bid volume, bullish).
+    /// Values beyond +/- 0.3 are considered directional signals by most market
+    /// microstructure models.
+    pub fn depth_imbalance(&self, n: usize) -> Option<Decimal> {
+        let bid_qty: Decimal = self.top_bids(n).iter().map(|l| l.quantity).sum();
+        let ask_qty: Decimal = self.top_asks(n).iter().map(|l| l.quantity).sum();
+        let total = bid_qty + ask_qty;
+        if total.is_zero() {
+            return None;
+        }
+        Some((bid_qty - ask_qty) / total)
+    }
 }
 
 /// A single price level returned by queries on the book.

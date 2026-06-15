@@ -46,4 +46,12 @@ impl Config {
     pub fn ws_url(&self) -> url::Url {
         self.ws_base.parse().expect("invalid WS_BASE URL")
     }
+
+    pub fn trade_ws_url(&self) -> url::Url {
+        let symbol_lower = self.symbol.to_lowercase();
+        std::env::var("TRADE_WS_BASE")
+            .unwrap_or_else(|_| format!("wss://stream.binance.com:9443/ws/{symbol_lower}@trade"))
+            .parse()
+            .expect("invalid trade WS URL")
+    }
 }

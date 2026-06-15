@@ -1,4 +1,5 @@
 mod error;
+mod ws;
 
 #[tokio::main]
 async fn main() {

@@ -13,6 +13,7 @@ use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use tower_http::timeout::TimeoutLayer;
 
+use crate::api::ws_push::{ws_book_handler, PushSender};
 use crate::orderbook::book::OrderBook;
 use crate::trades::vwap::VwapWindow;
 
@@ -23,9 +24,12 @@ use crate::trades::vwap::VwapWindow;
 /// The order book and VWAP window are never copied.
 #[derive(Clone)]
 pub struct AppState {
-    pub book:   Arc<RwLock<OrderBook>>,
-    pub vwap:   Arc<RwLock<VwapWindow>>,
-    pub symbol: String,
+    pub book:    Arc<RwLock<OrderBook>>,
+    pub vwap:    Arc<RwLock<VwapWindow>>,
+    pub symbol:  String,
+    /// Broadcast channel for pushing top-of-book snapshots to WebSocket clients.
+    /// Cloning a Sender is O(1) and safe across tasks.
+    pub push_tx: PushSender,
 }
 
 // ── Response shapes ────────────────────────────────────────────────────────────
@@ -100,6 +104,7 @@ pub fn router(state: AppState) -> Router {
         .route("/book/imbalance",   get(imbalance))
         .route("/book/vwap",        get(vwap_handler))
         .route("/metrics",          get(metrics_handler))
+        .route("/ws/book",          get(ws_book_handler))
         // Kill requests that stall for more than 10 seconds.
         // Without this, a lock-contended request holds a thread indefinitely.
         .layer(TimeoutLayer::new(Duration::from_secs(10)))

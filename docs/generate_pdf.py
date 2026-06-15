@@ -832,6 +832,174 @@ def fig_graceful_shutdown():
           sz=7, color=MUTED, anchor="middle", maxch=80)
     return d
 
+def fig_ws_push():
+    """Broadcast fan-out architecture for WebSocket push."""
+    dh = 190
+    d = Drawing(AVAIL, dh)
+    drect(d, 0, 0, AVAIL, dh, fill=PANEL)
+
+    # Manager box (sender)
+    drect(d, 10, 80, 110, 48, fill=RUST_DK, stroke=RUST, sw=1.5)
+    dtext(d, 65, 110, "MANAGER", font="Helvetica-Bold", sz=8, color=RUST, anchor="middle")
+    dtext(d, 65, 96, "broadcast::send()", sz=7, color=MUTED, anchor="middle")
+    dtext(d, 65, 84, "after each apply()", sz=6, color=MUTED, anchor="middle")
+
+    # broadcast channel in middle
+    cx = AVAIL / 2
+    drect(d, cx-55, 86, 110, 36, fill=PUR_DK, stroke=PURPLE, sw=1.5)
+    dtext(d, cx, 110, "broadcast::channel", font="Helvetica-Bold", sz=7, color=PURPLE, anchor="middle")
+    dtext(d, cx, 97, "capacity = 64 msgs", sz=6, color=MUTED, anchor="middle")
+    dtext(d, cx, 86, "Sender cloned freely", sz=6, color=MUTED, anchor="middle")
+
+    # arrows from manager to channel
+    harrow(d, 120, cx-55, 104, color=RUST)
+
+    # subscribers on right
+    subscribers = [
+        (AVAIL-110, 155, "Client A", BLUE),
+        (AVAIL-110, 104, "Client B", BLUE),
+        (AVAIL-110, 53,  "Client C", BLUE),
+    ]
+    for sx, sy, label, col in subscribers:
+        drect(d, sx, sy-14, 100, 28, fill=BLUE_DK, stroke=col, sw=1)
+        dtext(d, sx+50, sy+3, label, sz=7, color=col, anchor="middle")
+        dtext(d, sx+50, sy-8, ".subscribe()", sz=6, color=MUTED, anchor="middle")
+        harrow(d, cx+55, sx, sy, color=col)
+
+    # lagged annotation
+    drect(d, cx-30, 30, 120, 24, fill=YEL_DK, stroke=YELLOW, sw=0.8)
+    dtext(d, cx, 46, "Slow client -> Lagged error", sz=6, color=YELLOW, anchor="middle")
+    dtext(d, cx, 36, "skips to current state", sz=6, color=MUTED, anchor="middle")
+    d.add(Line(AVAIL-60, 53, cx+30, 54, strokeColor=YELLOW, strokeWidth=0.8, strokeDashArray=[2,2]))
+
+    dtext(d, AVAIL/2, 12,
+          "Each subscriber holds an independent Receiver. The Manager never blocks waiting for slow clients.",
+          sz=7, color=MUTED, anchor="middle", maxch=88)
+    return d
+
+def fig_circuit_breaker():
+    """Circuit breaker state machine for Binance REST."""
+    dh = 180
+    d = Drawing(AVAIL, dh)
+    drect(d, 0, 0, AVAIL, dh, fill=PANEL)
+
+    bw = 120; bh = 44; gap = (AVAIL - 3*bw) / 4
+    states_cb = [
+        (gap,          "CLOSED",    "requests pass",   GREEN_DK, GREEN),
+        (gap*2+bw,     "OPEN",      "fail fast / wait",RUST_DK,  RUST),
+        (gap*3+bw*2,   "HALF-OPEN", "1 probe allowed", YEL_DK,   YELLOW),
+    ]
+    sy = 90
+    for bx, name, sub, fill, col in states_cb:
+        drect(d, bx, sy, bw, bh, fill=fill, stroke=col, sw=1.5)
+        dtext(d, bx+bw/2, sy+bh-12, name, font="Helvetica-Bold", sz=8, color=col, anchor="middle")
+        dtext(d, bx+bw/2, sy+10, sub, sz=6, color=MUTED, anchor="middle")
+
+    # CLOSED -> OPEN
+    x1 = gap + bw; x2 = gap*2+bw
+    d.add(Line(x1, sy+bh/2+6, x2, sy+bh/2+6, strokeColor=RUST, strokeWidth=1.5))
+    harrow(d, x1+1, x2-1, sy+bh/2+6, color=RUST, label="5 failures")
+
+    # OPEN -> HALF-OPEN
+    x1 = gap*2+2*bw; x2 = gap*3+2*bw
+    harrow(d, x1, x2, sy+bh/2+6, color=YELLOW, label="30s cooldown")
+
+    # HALF-OPEN -> CLOSED (success)
+    x_ho = gap*3 + 2*bw + bw/2
+    x_cl = gap + bw/2
+    d.add(Line(x_ho, sy, x_ho, sy-20, strokeColor=GREEN, strokeWidth=1.5))
+    d.add(Line(x_ho, sy-20, x_cl, sy-20, strokeColor=GREEN, strokeWidth=1.5))
+    varrow(d, x_cl, sy-20, sy, color=GREEN)
+    dtext(d, (x_ho+x_cl)/2, sy-26, "probe OK -> CLOSED", sz=6, color=GREEN, anchor="middle")
+
+    # HALF-OPEN -> OPEN (failure)
+    x_ho2 = gap*3 + 2*bw + bw/2
+    x_op  = gap*2 + bw + bw/2
+    d.add(Line(x_ho2, sy+bh, x_ho2, sy+bh+14, strokeColor=RUST, strokeWidth=1, strokeDashArray=[3,2]))
+    d.add(Line(x_ho2, sy+bh+14, x_op, sy+bh+14, strokeColor=RUST, strokeWidth=1, strokeDashArray=[3,2]))
+    varrow(d, x_op, sy+bh+14, sy+bh, color=RUST)
+    dtext(d, (x_ho2+x_op)/2, sy+bh+18, "probe fails -> re-OPEN", sz=6, color=RUST, anchor="middle")
+
+    dtext(d, AVAIL/2, 12,
+          "Without a circuit breaker, 1000 retries per second against a down endpoint burn rate-limit quota and delay recovery.",
+          sz=7, color=MUTED, anchor="middle", maxch=90)
+    return d
+
+def fig_latency_budget():
+    """Horizontal bar chart of the latency budget."""
+    dh = 200
+    d = Drawing(AVAIL, dh)
+    drect(d, 0, 0, AVAIL, dh, fill=PANEL)
+
+    # (label, latency_us, color)
+    steps = [
+        ("Binance generates event",      50,   MUTED),
+        ("Travels over internet",         800,  BLUE),
+        ("TCP recv + kernel buffer",      20,   MUTED),
+        ("tokio-tungstenite decode",      5,    GREEN),
+        ("mpsc channel send/recv",        2,    GREEN),
+        ("serde_json parse",              8,    GREEN),
+        ("BTreeMap apply (log n, n=5k)",  3,    GREEN),
+        ("RwLock write + release",        1,    GREEN),
+        ("API handler: RwLock read",      1,    GREEN),
+        ("serde_json serialize response", 10,   PURPLE),
+        ("HTTP send to client",           200,  BLUE),
+    ]
+
+    total_us = sum(s[1] for s in steps)
+    bar_max  = AVAIL - 160
+    label_w  = 155
+    row_h    = 15
+    start_y  = dh - 22
+
+    dtext(d, 8, start_y + 6, "Stage", font="Helvetica-Bold", sz=6, color=WHITE)
+    dtext(d, label_w + bar_max, start_y + 6, "us", font="Helvetica-Bold", sz=6, color=WHITE, anchor="end")
+
+    for i, (label, us, col) in enumerate(steps):
+        y = start_y - (i+1) * row_h
+        bw = max(2, (us / total_us) * bar_max)
+        drect(d, label_w, y+1, bw, row_h-3, fill=col, stroke=None)
+        dtext(d, 4, y+4, label[:30], sz=6, color=WHITE if col != MUTED else MUTED)
+        dtext(d, label_w + bw + 3, y+4, str(us), sz=6, color=col)
+
+    # total line
+    ty = start_y - (len(steps)+1) * row_h
+    d.add(Line(label_w, ty+row_h, AVAIL-4, ty+row_h, strokeColor=YELLOW, strokeWidth=0.8))
+    dtext(d, label_w, ty+4, f"Total: ~{total_us} us  (~{total_us/1000:.1f} ms)", sz=7,
+          color=YELLOW, font="Helvetica-Bold")
+    dtext(d, AVAIL/2, 8,
+          "Network is 97% of the latency. Our code adds < 30 us. HFT colocates in Binance's data center to cut the 800 us hop.",
+          sz=7, color=MUTED, anchor="middle", maxch=90)
+    return d
+
+def fig_test_pyramid():
+    """Test pyramid showing coverage layers."""
+    dh = 180
+    d = Drawing(AVAIL, dh)
+    drect(d, 0, 0, AVAIL, dh, fill=PANEL)
+
+    cx = AVAIL / 2
+    levels = [
+        # (y_base, width, label, count, col, detail)
+        (20,  340, "UNIT TESTS",       "13 tests", GREEN,  "book, parser, VWAP - pure logic, no I/O"),
+        (75,  220, "INTEGRATION TESTS","8 tests",  BLUE,   "real Axum server, real HTTP, ephemeral port"),
+        (130, 120, "MANUAL / E2E",     "ongoing",  YELLOW, "curl against live Binance stream"),
+    ]
+    for y_base, width, label, count, col, detail in levels:
+        x = cx - width/2
+        pts = [x, y_base, x+width, y_base, cx+width*0.3, y_base+42, cx-width*0.3, y_base+42]
+        p = Polygon(pts); p.fillColor = col; p.strokeColor = col; p.strokeWidth = 0
+        # make it a flat trapezoid
+        d.add(Rect(x, y_base, width, 40, fillColor=colors.HexColor(col.hexval()[:7]+"30"),
+                   strokeColor=col, strokeWidth=1))
+        dtext(d, cx, y_base+26, label, font="Helvetica-Bold", sz=8, color=col, anchor="middle")
+        dtext(d, cx, y_base+14, f"{count}  -  {detail[:38]}", sz=6, color=MUTED, anchor="middle")
+
+    dtext(d, AVAIL/2, 8,
+          "More unit tests at the base (fast, cheap). Integration tests verify the full stack. Both run in CI.",
+          sz=7, color=MUTED, anchor="middle", maxch=85)
+    return d
+
 def fig_production_roadmap():
     """Production readiness checklist."""
     dh = 280
@@ -844,12 +1012,12 @@ def fig_production_roadmap():
         (GREEN,  "Micro-Price",            "Liquidity-weighted midpoint - smarter than (bid+ask)/2"),
         (GREEN,  "Depth Imbalance",        "Buy vs sell pressure signal used by HFT desks"),
         (GREEN,  "Graceful Shutdown",      "SIGTERM drains in-flight before exit"),
-        (YELLOW, "WebSocket Push API",     "Push book diffs to subscribers over WS instead of polling"),
-        (YELLOW, "Circuit Breaker",        "Stop hammering Binance REST if it is down"),
+        (GREEN,  "WebSocket Push API",     "broadcast::channel fan-out to subscribers"),
+        (GREEN,  "Circuit Breaker",        "Stops hammering degraded Binance REST endpoint"),
+        (GREEN,  "Integration Tests",      "8 tests hitting real Axum server on ephemeral port"),
         (YELLOW, "Rate Limiter",           "Reject burst traffic before it hits the book lock"),
         (RUST,   "TimescaleDB Writes",     "Persist every top-of-book snapshot for backtesting"),
         (RUST,   "Multi-Symbol",           "Fan out to N books, one manager per symbol"),
-        (RUST,   "Risk Engine Hook",       "Position limits + P&L calculation on every update"),
         (MUTED,  "Docker Compose",         "Spin up engine + Prometheus + Grafana in one command"),
     ]
     row_h = 21
@@ -1417,6 +1585,161 @@ def build():
                  "send a kill-switch signal. This is regulatory requirement in most jurisdictions."],
             ],
             [50*mm, AVAIL - 50*mm - 6],
+        ),
+        SP(8),
+        PageBreak(),
+    ]
+
+    # ── PART 15: WebSocket Push Server ────────────────────────────────────────
+    story += [
+        P("Part 15 - WebSocket Push Server", "h1"),
+        HR(),
+        P("Polling REST is fine for a dashboard that refreshes every second. "
+          "But a trading algorithm needs to act on every single book update the moment it arrives. "
+          "A WebSocket push server eliminates the poll cycle entirely. "
+          "The book update travels from Binance -> our Manager -> every connected client "
+          "in one unbroken async pipeline.", "body"),
+        SP(4),
+        fig_ws_push(),
+        CAP("Figure 20 - Broadcast fan-out. One Manager publishes. Every subscriber receives independently."),
+        SP(8),
+        P("Why broadcast::channel over mpsc?", "h3"),
+        P("mpsc is one sender, one receiver. If we used mpsc and wanted 10 clients, "
+          "we would need 10 channels and the Manager would have to iterate through them. "
+          "broadcast::channel is one sender, many receivers. Each subscriber calls .subscribe() "
+          "to get their own independent Receiver. The channel internally manages fan-out. "
+          "The Manager sends once. All 10 clients get it.", "body"),
+        P("The Lagged error:", "h3"),
+        P("If a client is slow (perhaps it is on a weak connection or doing heavy processing), "
+          "its receiver buffer fills up. When it is full, the oldest unread messages are dropped "
+          "and the Receiver returns a Lagged(n) error indicating how many were skipped. "
+          "For a market data display, this is acceptable - the next message will contain "
+          "the current state anyway. We do not buffer indefinitely and we never slow down "
+          "the Manager waiting for a slow client.", "body"),
+        P("How to connect:", "code"),
+        P("GET /ws/book - upgrade to WebSocket. Receive JSON BookPush events at the rate the book updates.", "body"),
+        PageBreak(),
+    ]
+
+    # ── PART 16: Circuit Breaker ──────────────────────────────────────────────
+    story += [
+        P("Part 16 - Circuit Breaker", "h1"),
+        HR(),
+        P("The circuit breaker is named after the electrical safety device. "
+          "When a circuit is drawing too much current, the breaker opens and stops the flow "
+          "before it causes a fire. In software, the pattern stops outbound requests to a "
+          "struggling service before your retries make the problem worse.", "body"),
+        SP(4),
+        fig_circuit_breaker(),
+        CAP("Figure 21 - Circuit breaker state machine for the Binance REST snapshot endpoint."),
+        SP(8),
+        P("Why it matters for our system:", "h3"),
+        P("When Binance's REST API is degraded (slow but not fully down), our retry loop "
+          "would fire every few seconds. Binance rate-limits by IP. "
+          "If we burn through our rate-limit quota with retries, we get banned from the API - "
+          "which means we cannot fetch snapshots even after the original problem is fixed. "
+          "The circuit breaker stops outbound requests for 30 seconds after 5 consecutive failures, "
+          "giving Binance time to recover and preserving our quota.", "body"),
+        P("The three states:", "h3"),
+        P("Closed (normal): all requests pass through. Failure counter increments on each error, resets on success.", "body"),
+        P("Open (failing): requests are rejected immediately without hitting Binance. After 30 seconds, transitions to HalfOpen.", "body"),
+        P("HalfOpen (testing): exactly one probe request is allowed through. If it succeeds, circuit closes. If it fails, circuit re-opens.", "body"),
+        PageBreak(),
+    ]
+
+    # ── PART 17: Testing Strategy ─────────────────────────────────────────────
+    story += [
+        P("Part 17 - Testing Strategy", "h1"),
+        HR(),
+        P("The test suite has three layers. Each layer tests different things at different speeds. "
+          "Together they give confidence that both individual functions and the full HTTP stack behave correctly.", "body"),
+        SP(4),
+        fig_test_pyramid(),
+        CAP("Figure 22 - Test pyramid. Fast unit tests at the base. Integration tests verify the full stack."),
+        SP(8),
+        P("Unit tests (13 tests):", "h3"),
+        P("Pure logic tests with no I/O. Fast enough to run on every keystroke. "
+          "They cover: BTreeMap ordering, zero-quantity deletion, spread calculation, "
+          "micro-price and depth imbalance math, VWAP window sliding and eviction, "
+          "Binance JSON parsing, and sequence ID validation.", "body"),
+        P("Integration tests (8 tests):", "h3"),
+        P("Each test spins up a real Axum server on an ephemeral OS-assigned port "
+          "(port 0 -> OS picks a free one). No mocks. Real HTTP requests via reqwest. "
+          "They verify: health check returns 503 when unsynced and 200 when synced, "
+          "best bid/ask/spread are correct, snapshot depth capping at 100, "
+          "micro-price returns the arithmetic mid when quantities are equal, "
+          "imbalance interprets heavy bids as 'strong buy pressure', "
+          "and /metrics returns Prometheus text format with # HELP headers.", "body"),
+        P("Why no mocked Binance WebSocket?", "h3"),
+        P("The WebSocket client and Manager run in background tasks that connect to external URLs. "
+          "Testing them would require a mock WebSocket server. "
+          "Instead, we test the book and parser logic in unit tests (which cover all the interesting cases), "
+          "and test the HTTP API with a real server but a manually-populated book. "
+          "This gives full coverage of both layers without the complexity of a mock exchange.", "body"),
+        PageBreak(),
+    ]
+
+    # ── PART 18: Latency Analysis ─────────────────────────────────────────────
+    story += [
+        P("Part 18 - Latency Budget", "h1"),
+        HR(),
+        P("Where does time actually go from 'Binance executes a trade' to 'our API responds'? "
+          "Most systems guess. We can reason about it.", "body"),
+        SP(4),
+        fig_latency_budget(),
+        CAP("Figure 23 - Latency budget from Binance event to API response. Network dominates."),
+        SP(8),
+        P("The key insight:", "h3"),
+        P("Network latency (the internet hop to Binance's servers) accounts for roughly 97% of total latency. "
+          "Our code - parsing, applying updates, locking - adds under 30 microseconds. "
+          "This is why high-frequency trading firms pay millions to colocate their servers "
+          "in the same data center as the exchange. Cutting network latency from 800us to 20us "
+          "is a 40x improvement in responsiveness. No amount of code optimization can match it.", "body"),
+        P("What we can control:", "h3"),
+        P("tokio-tungstenite decode is already near-zero. serde_json is the hottest path in our code - "
+          "if we needed to optimize further, we would switch to simd-json which is 3-5x faster. "
+          "The BTreeMap apply is O(log n) where n is the number of price levels (~5000 for BTC). "
+          "log2(5000) = 12 iterations. Negligible.", "body"),
+        P("The RwLock:", "h3"),
+        P("std::sync::RwLock is contention-free when the write lock is not held. "
+          "Since the Manager holds the write lock for less than 10 microseconds per update "
+          "(pure memory operations), API handlers almost never wait. "
+          "On Tokio's default 4-core thread pool, read requests can execute truly simultaneously "
+          "on all 4 threads while the Manager writes.", "body"),
+        PageBreak(),
+    ]
+
+    # ── PART 19: Interview Q&A ────────────────────────────────────────────────
+    story += [
+        P("Part 19 - Interview Preparation: Questions and Answers", "h1"),
+        HR(),
+        P("These are the questions you will be asked. Every answer is grounded in this codebase.", "body"),
+        SP(6),
+        ptable(
+            ["Question", "The Answer (from this code)"],
+            [
+                ["Why BTreeMap and not HashMap for the order book?",
+                 "HashMap is O(1) but unordered. To find best bid with HashMap, you scan every entry - O(n). BTreeMap's last() gives the maximum key in O(log n). For 5000 price levels, log2(5000) = 12 operations. We also need in-order iteration for top_bids() which is O(k) with BTreeMap and O(n log n) with HashMap. The sorted property is fundamental."],
+                ["Why std::sync::RwLock instead of tokio::sync::RwLock?",
+                 "Because we never .await inside the lock. Book operations are pure in-memory computation. tokio's RwLock is designed for async critical sections where you yield to the scheduler while holding the lock. Using it for synchronous work adds scheduling overhead for no benefit. std::sync::RwLock is faster here."],
+                ["Why Arc<RwLock<>> for sharing the book?",
+                 "Arc gives shared ownership across task boundaries - the Manager task and multiple API handler tasks all need a live reference to the same book. RwLock enforces the invariant: one writer, many concurrent readers. Without Arc, you cannot share a reference across tokio::spawn boundaries. Without RwLock, concurrent readers would race."],
+                ["How does the Binance sync protocol work?",
+                 "Subscribe to the WebSocket diff stream first. Events buffer in our mpsc channel. Separately, fetch a REST snapshot. Apply the snapshot. Scan buffered events and discard any where last_update_id <= snapshot_id (already included). Find the first event where first_update_id <= snapshot_id+1 and apply it. From then, every event's first_update_id must equal the previous last_update_id+1. A gap triggers a full resync."],
+                ["What happens when the WebSocket disconnects?",
+                 "The client task's drive_stream() loop exits. It sends WsEvent::Reconnected before any new messages. The Manager receives Reconnected, clears the book, and restarts the sync cycle from Phase 1. In the meantime, the HTTP API returns stale data - /health returns 503 because last_update_id resets to 0 on clear(). The WS client backs off exponentially before reconnecting."],
+                ["How do you handle a sequence gap?",
+                 "In run_live(), we check that each event's first_update_id == prev_last_id + 1. If not, we return LiveResult::SequenceGap. The outer loop increments the sequence_gaps metric, clears the book, and restarts the sync cycle. We never try to reconstruct missing events because there is no API to fetch them individually."],
+                ["Why mpsc channel with a 10,000-element buffer?",
+                 "The snapshot REST fetch takes ~100ms. At peak, Binance sends ~100 depth updates per second. So we need to buffer ~10 events per snapshot fetch. 10,000 is 1000x headroom - it absorbs slow snapshot fetches, high-traffic bursts, and brief processing delays without dropping a single event. The buffer is the key to the sync protocol working correctly."],
+                ["What is micro-price and why is it better than (bid+ask)/2?",
+                 "Micro-price weights each side by the other side's quantity: (ask * bid_qty + bid * ask_qty) / (bid_qty + ask_qty). If there is 10x more buying pressure than selling pressure, the micro-price is 91% of the way toward the ask. This reflects where the market is likely to trade next. The arithmetic midpoint ignores this liquidity signal entirely."],
+                ["How does the circuit breaker work?",
+                 "Three states: Closed (requests pass), Open (fast-fail for 30s), HalfOpen (one probe). After 5 consecutive REST failures, the breaker opens. This prevents burning Binance's rate-limit quota with retries against a down endpoint, which would prevent recovery even after Binance recovers. After 30s cooldown, we let one probe through. Success closes the circuit. Failure re-opens it."],
+                ["How does the broadcast::channel for WebSocket push work?",
+                 "broadcast::channel has one Sender and arbitrarily many Receivers. Each WebSocket client calls .subscribe() to get their own Receiver. The Manager calls push_tx.send() once per book update. All clients receive the same payload independently. If a client is too slow, it receives a Lagged(n) error and skips to the current state - we never block the Manager waiting for slow clients."],
+            ],
+            [68*mm, AVAIL - 68*mm - 6],
         ),
         SP(12),
         P("What makes this system interview-ready:", "h3"),

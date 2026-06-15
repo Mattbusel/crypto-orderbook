@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::info;
 
 use api::routes::{router, AppState};
@@ -18,6 +18,11 @@ use config::Config;
 use orderbook::{book::OrderBook, manager::Manager};
 use trades::{manager::TradeManager, vwap::VwapWindow};
 use ws::client;
+
+// How many messages the broadcast channel buffers per subscriber.
+// If a slow client falls more than this many updates behind, it starts
+// receiving Lagged errors and skips to the current state automatically.
+const PUSH_CHANNEL_CAPACITY: usize = 64;
 
 #[tokio::main]
 async fn main() {
@@ -28,31 +33,34 @@ async fn main() {
     let cfg = Config::from_env();
     info!(symbol = %cfg.symbol, port = cfg.api_port, "crypto-orderbook starting");
 
-    // Force all Prometheus metrics to register at zero before any events arrive.
-    // Without this, counters that never fire are absent from /metrics entirely,
-    // which confuses dashboards that expect them to always exist.
+    // Force all Prometheus metrics to zero before any events arrive.
     metrics::init_all();
 
-    // Shared order book — written by the Manager, read by every API handler.
     let book = Arc::new(RwLock::new(OrderBook::new()));
-
-    // Shared VWAP window — written by the TradeManager, read by /book/vwap.
     let vwap = Arc::new(RwLock::new(VwapWindow::new(Duration::from_secs(60))));
 
-    // Depth stream: channel between the WebSocket client and the book Manager.
+    // Broadcast channel: Manager publishes here, every WS subscriber reads it.
+    // broadcast::channel returns (Sender, Receiver). We keep the Sender and
+    // distribute it. Each subscriber calls .subscribe() to get their own Receiver.
+    let (push_tx, _initial_rx) = broadcast::channel(PUSH_CHANNEL_CAPACITY);
+
+    // Depth stream
     let (depth_tx, depth_rx) = mpsc::channel(cfg.channel_buffer);
     client::spawn(cfg.ws_url(), depth_tx);
-    tokio::spawn(Manager::new(depth_rx, Arc::clone(&book), cfg.symbol.clone()).run());
+    tokio::spawn(
+        Manager::new(depth_rx, Arc::clone(&book), cfg.symbol.clone(), push_tx.clone()).run()
+    );
 
-    // Trade stream: separate WebSocket subscription for VWAP calculation.
+    // Trade stream
     let (trade_tx, trade_rx) = mpsc::channel(cfg.channel_buffer);
     client::spawn(cfg.trade_ws_url(), trade_tx);
     tokio::spawn(TradeManager::new(trade_rx, Arc::clone(&vwap)).run());
 
     let state = AppState {
-        book:   Arc::clone(&book),
-        vwap:   Arc::clone(&vwap),
-        symbol: cfg.symbol.clone(),
+        book:    Arc::clone(&book),
+        vwap:    Arc::clone(&vwap),
+        symbol:  cfg.symbol.clone(),
+        push_tx: push_tx.clone(),
     };
 
     let addr = SocketAddr::from(([0, 0, 0, 0], cfg.api_port));
@@ -62,9 +70,6 @@ async fn main() {
         .await
         .expect("failed to bind API port");
 
-    // tokio::select! races the HTTP server against SIGTERM/Ctrl-C.
-    // Whichever finishes first wins. In production, SIGTERM wins:
-    // axum drains in-flight requests before the process exits.
     tokio::select! {
         result = axum::serve(listener, router(state)) => {
             result.expect("HTTP server error");

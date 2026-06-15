@@ -1,16 +1,89 @@
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+use crate::api::ws_push::{serialize_push, PushSender};
 use crate::error::{AppError, Result};
 use crate::metrics;
 use crate::orderbook::book::OrderBook;
 use crate::ws::binance::{parse_depth_update, DepthUpdate, PriceLevel};
 use crate::ws::WsEvent;
+
+// ── Circuit breaker ────────────────────────────────────────────────────────────
+// Wraps the snapshot REST call. Opens after OPEN_THRESHOLD consecutive failures,
+// rejects requests for COOLDOWN, then lets one probe through (HalfOpen).
+// This prevents hammering a degraded Binance endpoint, which would consume
+// our rate-limit quota and make recovery slower, not faster.
+
+const OPEN_THRESHOLD: u32     = 5;
+const COOLDOWN: Duration       = Duration::from_secs(30);
+
+#[derive(Debug)]
+enum BreakerState {
+    Closed { consecutive_failures: u32 },
+    Open   { opened_at: Instant },
+    HalfOpen,
+}
+
+struct CircuitBreaker {
+    state: BreakerState,
+}
+
+impl CircuitBreaker {
+    fn new() -> Self {
+        Self { state: BreakerState::Closed { consecutive_failures: 0 } }
+    }
+
+    /// Returns true if the caller should attempt the request.
+    fn allow(&mut self) -> bool {
+        match &self.state {
+            BreakerState::Closed { .. } => true,
+            BreakerState::Open { opened_at } => {
+                if opened_at.elapsed() >= COOLDOWN {
+                    self.state = BreakerState::HalfOpen;
+                    info!("circuit breaker half-open: allowing probe request");
+                    true
+                } else {
+                    false
+                }
+            }
+            BreakerState::HalfOpen => true,
+        }
+    }
+
+    fn record_success(&mut self) {
+        match self.state {
+            BreakerState::HalfOpen => {
+                info!("circuit breaker closed: probe succeeded");
+            }
+            _ => {}
+        }
+        self.state = BreakerState::Closed { consecutive_failures: 0 };
+    }
+
+    fn record_failure(&mut self) {
+        self.state = match self.state {
+            BreakerState::Closed { consecutive_failures } => {
+                let n = consecutive_failures + 1;
+                if n >= OPEN_THRESHOLD {
+                    warn!(failures = n, "circuit breaker OPEN: blocking snapshot requests");
+                    BreakerState::Open { opened_at: Instant::now() }
+                } else {
+                    BreakerState::Closed { consecutive_failures: n }
+                }
+            }
+            BreakerState::HalfOpen => {
+                warn!("circuit breaker re-opened: probe failed");
+                BreakerState::Open { opened_at: Instant::now() }
+            }
+            BreakerState::Open { opened_at } => BreakerState::Open { opened_at },
+        };
+    }
+}
 
 // ── Snapshot types ─────────────────────────────────────────────────────────────
 
@@ -34,34 +107,22 @@ struct Snapshot {
 // ── Manager ────────────────────────────────────────────────────────────────────
 
 pub struct Manager {
-    // Where we receive WebSocket events from the client task.
-    rx: mpsc::Receiver<WsEvent>,
-
-    // The order book shared with the API layer.
-    // std::sync::RwLock because book operations are pure computation —
-    // no await points inside the lock, so we don't need the async version.
-    book: Arc<RwLock<OrderBook>>,
-
-    // Trading pair, e.g. "BTCUSDT". Used to build the REST snapshot URL.
-    symbol: String,
-
-    // HTTP client. reqwest clients hold a connection pool internally,
-    // so we create one and reuse it rather than making a new one per request.
-    http: reqwest::Client,
+    rx:       mpsc::Receiver<WsEvent>,
+    book:     Arc<RwLock<OrderBook>>,
+    symbol:   String,
+    http:     reqwest::Client,
+    push_tx:  PushSender,
+    breaker:  CircuitBreaker,
 }
 
 impl Manager {
     pub fn new(
-        rx: mpsc::Receiver<WsEvent>,
-        book: Arc<RwLock<OrderBook>>,
-        symbol: String,
+        rx:      mpsc::Receiver<WsEvent>,
+        book:    Arc<RwLock<OrderBook>>,
+        symbol:  String,
+        push_tx: PushSender,
     ) -> Self {
-        Self {
-            rx,
-            book,
-            symbol,
-            http: reqwest::Client::new(),
-        }
+        Self { rx, book, symbol, push_tx, http: reqwest::Client::new(), breaker: CircuitBreaker::new() }
     }
 
     /// Run the manager indefinitely.
@@ -124,16 +185,25 @@ impl Manager {
     // ── Phase 1: Snapshot fetch ──────────────────────────────────────────────
 
     /// Fetch a depth snapshot, retrying with backoff until one arrives.
-    /// We never give up — if Binance's REST is down, we wait.
-    async fn fetch_snapshot_with_retry(&self) -> Snapshot {
+    /// The circuit breaker stops outbound requests during Binance REST outages.
+    async fn fetch_snapshot_with_retry(&mut self) -> Snapshot {
         let mut attempt = 0u32;
         loop {
+            if !self.breaker.allow() {
+                // Circuit is open. Don't hammer Binance. Wait then retry.
+                warn!("circuit breaker open, waiting 5s before retry");
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+
             match self.fetch_snapshot().await {
                 Ok(snap) => {
+                    self.breaker.record_success();
                     metrics::SNAPSHOTS_TOTAL.inc();
                     return snap;
                 }
                 Err(e) => {
+                    self.breaker.record_failure();
                     let wait_secs = 2u64.saturating_pow(attempt).min(30);
                     error!(error = %e, wait_secs, "snapshot fetch failed, retrying");
                     tokio::time::sleep(Duration::from_secs(wait_secs)).await;
@@ -274,6 +344,18 @@ impl Manager {
                             if let Some(f) = s.to_f64() {
                                 metrics::SPREAD.set(f);
                             }
+                        }
+                        // Publish to WebSocket subscribers. send() fails only when
+                        // there are no subscribers — that's fine, we discard the error.
+                        if let Some(payload) = serialize_push(
+                            &self.symbol,
+                            book.best_bid(),
+                            book.best_ask(),
+                            book.spread(),
+                            book.micro_price(),
+                            book.last_update_id,
+                        ) {
+                            let _ = self.push_tx.send(payload);
                         }
                     }
 

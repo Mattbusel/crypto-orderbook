@@ -1,4 +1,5 @@
 mod error;
+mod orderbook;
 mod ws;
 
 #[tokio::main]

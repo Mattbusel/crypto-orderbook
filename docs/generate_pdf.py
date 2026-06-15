@@ -290,6 +290,294 @@ def diagram_error_taxonomy():
     return d
 
 
+def diagram_btreemap_vs_hashmap():
+    """Side by side: HashMap (unordered) vs BTreeMap (sorted), showing why sorted wins."""
+    dw, dh = W - 60*mm, 105*mm
+    d = Drawing(dw, dh)
+
+    d.add(String(dw/2, 97, "Why We Use a Sorted Map Instead of a Regular Map",
+                  fontName="Helvetica-Bold", fontSize=11,
+                  fillColor=C_WHITE, textAnchor="middle"))
+
+    half = dw / 2
+
+    # HashMap side
+    d.add(Rect(8, 12, half - 16, 80, fillColor=C_DARK, strokeColor=C_RUST, strokeWidth=1.5, rx=4, ry=4))
+    d.add(String(half/2, 86, "HashMap  (unordered)", fontName="Helvetica-Bold", fontSize=9,
+                  fillColor=C_RUST, textAnchor="middle"))
+
+    hashmap_entries = [
+        ("29498.00", "0.500"),
+        ("29501.00", "0.842"),
+        ("29495.00", "12.30"),
+        ("29500.00", "1.245"),
+        ("29499.50", "3.100"),
+    ]
+    for i, (price, qty) in enumerate(hashmap_entries):
+        y = 72 - i * 11
+        d.add(Rect(14, y, half - 28, 10, fillColor=colors.HexColor("#1c1010"),
+                    strokeColor=C_BORDER, strokeWidth=0.5))
+        d.add(String(18,        y + 3, price, fontName="Courier", fontSize=8, fillColor=C_MUTED))
+        d.add(String(half - 16, y + 3, qty,   fontName="Courier", fontSize=8,
+                      fillColor=C_MUTED, textAnchor="end"))
+
+    d.add(Rect(14, 14, half - 28, 10, fillColor=colors.HexColor("#3a1010"),
+                strokeColor=C_RUST, strokeWidth=1))
+    d.add(String(half/2, 18, "To find best bid: scan ALL entries",
+                  fontName="Helvetica", fontSize=7.5, fillColor=C_RUST, textAnchor="middle"))
+
+    # BTreeMap side
+    d.add(Rect(half + 8, 12, half - 16, 80, fillColor=C_DARK,
+               strokeColor=C_GREEN, strokeWidth=1.5, rx=4, ry=4))
+    d.add(String(half + half/2, 86, "BTreeMap  (sorted by price)", fontName="Helvetica-Bold", fontSize=9,
+                  fillColor=C_GREEN, textAnchor="middle"))
+
+    btree_entries = [
+        ("29495.00", "12.30"),
+        ("29498.00", "0.500"),
+        ("29499.50", "3.100"),
+        ("29500.00", "1.245"),
+        ("29501.00", "0.842"),
+    ]
+    for i, (price, qty) in enumerate(btree_entries):
+        y = 72 - i * 11
+        is_last = (i == len(btree_entries) - 1)
+        bg = colors.HexColor("#1a3a2a") if is_last else colors.HexColor("#0f1f15")
+        border = C_GREEN if is_last else C_BORDER
+        d.add(Rect(half + 14, y, half - 28, 10, fillColor=bg,
+                    strokeColor=border, strokeWidth=0.8 if is_last else 0.5))
+        d.add(String(half + 18,     y + 3, price, fontName="Courier", fontSize=8,
+                      fillColor=C_GREEN if is_last else C_MUTED))
+        d.add(String(dw - 16,       y + 3, qty,   fontName="Courier", fontSize=8,
+                      fillColor=C_GREEN if is_last else C_MUTED, textAnchor="end"))
+        if is_last:
+            d.add(String(dw - 8, y + 3, "BEST BID",
+                          fontName="Helvetica-Bold", fontSize=6.5,
+                          fillColor=C_GREEN, textAnchor="end"))
+
+    d.add(Rect(half + 14, 14, half - 28, 10, fillColor=colors.HexColor("#1a3a2a"),
+                strokeColor=C_GREEN, strokeWidth=1))
+    d.add(String(half + half/2, 18, "Best bid is always the last entry",
+                  fontName="Helvetica", fontSize=7.5, fillColor=C_GREEN, textAnchor="middle"))
+
+    d.add(String(dw/2, 4,
+                  "Figure 12 - HashMap stores entries in random order. BTreeMap keeps them sorted so the best bid/ask are always at the ends.",
+                  fontName="Helvetica-Oblique", fontSize=7,
+                  fillColor=C_MUTED, textAnchor="middle"))
+    return d
+
+
+def diagram_book_memory_layout():
+    """Shows both BTreeMaps in memory with arrows showing best bid/ask positions."""
+    dw, dh = W - 60*mm, 110*mm
+    d = Drawing(dw, dh)
+
+    d.add(String(dw/2, 102, "How the Book Sits in Memory",
+                  fontName="Helvetica-Bold", fontSize=11,
+                  fillColor=C_WHITE, textAnchor="middle"))
+
+    col_w = (dw - 50) / 2
+    row_h = 12
+
+    def draw_side(ox, title, entries, color, best_label, best_is_last):
+        d.add(String(ox + col_w/2, 90, title,
+                      fontName="Helvetica-Bold", fontSize=9,
+                      fillColor=color, textAnchor="middle"))
+        d.add(String(ox, 80, "PRICE", fontName="Helvetica-Bold", fontSize=7.5, fillColor=C_MUTED))
+        d.add(String(ox + col_w - 2, 80, "QTY", fontName="Helvetica-Bold", fontSize=7.5,
+                      fillColor=C_MUTED, textAnchor="end"))
+
+        for i, (price, qty) in enumerate(entries):
+            y = 66 - i * row_h
+            is_best = (i == len(entries)-1) if best_is_last else (i == 0)
+            bg     = colors.HexColor("#1a3a2a") if (is_best and color == C_GREEN) else \
+                     colors.HexColor("#3a1a1a") if (is_best and color == C_RUST)  else C_DARK
+            border = color if is_best else C_BORDER
+            d.add(Rect(ox, y, col_w, row_h - 1, fillColor=bg,
+                        strokeColor=border, strokeWidth=1.2 if is_best else 0.4))
+            d.add(String(ox + 4,         y + 4, price,
+                          fontName="Courier", fontSize=8, fillColor=color if is_best else C_MUTED))
+            d.add(String(ox + col_w - 4, y + 4, qty,
+                          fontName="Courier", fontSize=8,
+                          fillColor=C_WHITE if is_best else C_MUTED, textAnchor="end"))
+            if is_best:
+                d.add(String(ox + col_w/2, y - 6, best_label,
+                              fontName="Helvetica-Bold", fontSize=7,
+                              fillColor=color, textAnchor="middle"))
+                arr_y = y + (row_h - 1)/2
+                d.add(Line(ox - 30, arr_y, ox - 4, arr_y, strokeColor=color, strokeWidth=1.5))
+                d.add(Polygon([ox - 4, arr_y, ox - 10, arr_y + 3, ox - 10, arr_y - 3],
+                               fillColor=color, strokeColor=color))
+                d.add(String(ox - 32, arr_y + 2, "next_back()" if best_is_last else "next()",
+                              fontName="Courier", fontSize=6.5, fillColor=color, textAnchor="end"))
+
+    bids = [
+        ("29,495.00", "12.300"),
+        ("29,498.00", " 0.500"),
+        ("29,499.50", " 3.100"),
+        ("29,500.00", " 1.245"),
+        ("29,501.00", " 0.842"),
+    ]
+    asks = [
+        ("29,502.00", " 0.310"),
+        ("29,503.00", " 2.100"),
+        ("29,504.50", " 0.750"),
+        ("29,507.00", " 5.000"),
+        ("29,510.00", " 8.200"),
+    ]
+
+    draw_side(40,          "BIDS  (sorted low to high)", bids, C_GREEN,
+              "BEST BID - last entry", True)
+    draw_side(dw/2 + 10,   "ASKS  (sorted low to high)", asks, C_RUST,
+              "BEST ASK - first entry", False)
+
+    d.add(String(dw/2, 4,
+                  "Figure 13 - Both maps sorted ascending. Best bid is at the back of bids. Best ask is at the front of asks.",
+                  fontName="Helvetica-Oblique", fontSize=7,
+                  fillColor=C_MUTED, textAnchor="middle"))
+    return d
+
+
+def diagram_apply_update_flow():
+    """Flowchart of what happens for each price level in an incoming update."""
+    dw, dh = W - 60*mm, 95*mm
+    d = Drawing(dw, dh)
+
+    d.add(String(dw/2, 87, "What Happens for Each Price Level in an Update",
+                  fontName="Helvetica-Bold", fontSize=11,
+                  fillColor=C_WHITE, textAnchor="middle"))
+
+    # Incoming update box
+    d.add(Rect(dw/2 - 75, 68, 150, 16, fillColor=C_DARK,
+               strokeColor=C_ACCENT, strokeWidth=1.5, rx=3, ry=3))
+    d.add(String(dw/2, 79, 'Price level arrives:  ["29499.50", "0.00"]',
+                  fontName="Courier", fontSize=8, fillColor=C_ACCENT, textAnchor="middle"))
+    d.add(String(dw/2, 71, "quantity = 0.00",
+                  fontName="Helvetica-Bold", fontSize=7.5, fillColor=C_YELLOW, textAnchor="middle"))
+
+    # Diamond decision
+    diamond_cx, diamond_cy = dw/2, 52
+    s = 12
+    d.add(Polygon([diamond_cx, diamond_cy + s,
+                   diamond_cx + s*1.8, diamond_cy,
+                   diamond_cx, diamond_cy - s,
+                   diamond_cx - s*1.8, diamond_cy],
+                   fillColor=colors.HexColor("#1a1a2a"),
+                   strokeColor=C_YELLOW, strokeWidth=1.5))
+    d.add(String(diamond_cx, diamond_cy + 3, "quantity",
+                  fontName="Helvetica-Bold", fontSize=7.5, fillColor=C_YELLOW, textAnchor="middle"))
+    d.add(String(diamond_cx, diamond_cy - 4, "== 0 ?",
+                  fontName="Helvetica-Bold", fontSize=7.5, fillColor=C_YELLOW, textAnchor="middle"))
+
+    # Line from update to diamond
+    d.add(Line(dw/2, 68, dw/2, 64, strokeColor=C_MUTED, strokeWidth=1.2))
+    d.add(Polygon([dw/2, 64, dw/2-3, 68, dw/2+3, 68], fillColor=C_MUTED, strokeColor=C_MUTED))
+
+    # YES branch (left) - remove
+    yes_x = dw/2 - 100
+    d.add(Line(diamond_cx - s*1.8, diamond_cy, yes_x + 60, diamond_cy,
+                strokeColor=C_RUST, strokeWidth=1.2))
+    d.add(String((diamond_cx - s*1.8 + yes_x + 60)/2, diamond_cy + 4, "YES",
+                  fontName="Helvetica-Bold", fontSize=7.5, fillColor=C_RUST, textAnchor="middle"))
+    d.add(Line(yes_x + 60, diamond_cy, yes_x + 60, 30,
+                strokeColor=C_RUST, strokeWidth=1.2))
+    d.add(Polygon([yes_x+60, 30, yes_x+57, 36, yes_x+63, 36], fillColor=C_RUST, strokeColor=C_RUST))
+    d.add(Rect(yes_x, 14, 120, 15, fillColor=colors.HexColor("#3a1010"),
+               strokeColor=C_RUST, strokeWidth=1.5, rx=3, ry=3))
+    d.add(String(yes_x + 60, 24, "map.remove(price)",
+                  fontName="Courier", fontSize=8.5, fillColor=C_RUST, textAnchor="middle"))
+    d.add(String(yes_x + 60, 16, "Price level deleted from book",
+                  fontName="Helvetica", fontSize=7, fillColor=C_MUTED, textAnchor="middle"))
+
+    # NO branch (right) - insert/update
+    no_x = dw/2 + 40
+    d.add(Line(diamond_cx + s*1.8, diamond_cy, no_x + 60, diamond_cy,
+                strokeColor=C_GREEN, strokeWidth=1.2))
+    d.add(String((diamond_cx + s*1.8 + no_x + 60)/2, diamond_cy + 4, "NO",
+                  fontName="Helvetica-Bold", fontSize=7.5, fillColor=C_GREEN, textAnchor="middle"))
+    d.add(Line(no_x + 60, diamond_cy, no_x + 60, 30,
+                strokeColor=C_GREEN, strokeWidth=1.2))
+    d.add(Polygon([no_x+60, 30, no_x+57, 36, no_x+63, 36], fillColor=C_GREEN, strokeColor=C_GREEN))
+    d.add(Rect(no_x, 14, 120, 15, fillColor=colors.HexColor("#1a3a1a"),
+               strokeColor=C_GREEN, strokeWidth=1.5, rx=3, ry=3))
+    d.add(String(no_x + 60, 24, "map.insert(price, qty)",
+                  fontName="Courier", fontSize=8.5, fillColor=C_GREEN, textAnchor="middle"))
+    d.add(String(no_x + 60, 16, "Add new or overwrite existing",
+                  fontName="Helvetica", fontSize=7, fillColor=C_MUTED, textAnchor="middle"))
+
+    d.add(String(dw/2, 4,
+                  "Figure 14 - Every incoming price level takes exactly one of two paths. No other cases exist.",
+                  fontName="Helvetica-Oblique", fontSize=7,
+                  fillColor=C_MUTED, textAnchor="middle"))
+    return d
+
+
+def diagram_spread_visual():
+    """Visual ruler showing spread between best bid and best ask on a price axis."""
+    dw, dh = W - 60*mm, 80*mm
+    d = Drawing(dw, dh)
+
+    d.add(String(dw/2, 72, "The Spread: The Gap Between Buyers and Sellers",
+                  fontName="Helvetica-Bold", fontSize=11,
+                  fillColor=C_WHITE, textAnchor="middle"))
+
+    # Price axis
+    axis_y = 38
+    axis_x1, axis_x2 = 20, dw - 20
+    d.add(Line(axis_x1, axis_y, axis_x2, axis_y, strokeColor=C_BORDER, strokeWidth=1))
+
+    # Price ticks
+    prices = [
+        (29495, 0.08),
+        (29498, 0.18),
+        (29500, 0.28),
+        (29501, 0.35),  # best bid
+        (29502, 0.42),  # best ask
+        (29504, 0.52),
+        (29507, 0.65),
+        (29510, 0.80),
+    ]
+    axis_span = axis_x2 - axis_x1
+
+    best_bid_frac = 0.35
+    best_ask_frac = 0.42
+
+    for price, frac in prices:
+        x = axis_x1 + frac * axis_span
+        is_bid = (price == 29501)
+        is_ask = (price == 29502)
+        color = C_GREEN if is_bid else C_RUST if is_ask else C_BORDER
+        h = 14 if (is_bid or is_ask) else 6
+        d.add(Line(x, axis_y - h/2, x, axis_y + h/2, strokeColor=color, strokeWidth=2 if (is_bid or is_ask) else 0.8))
+        d.add(String(x, axis_y - h/2 - 8, str(price),
+                      fontName="Helvetica", fontSize=7, fillColor=color, textAnchor="middle"))
+
+    # Bid label
+    bid_x = axis_x1 + best_bid_frac * axis_span
+    ask_x = axis_x1 + best_ask_frac * axis_span
+    d.add(String(bid_x, axis_y + 12, "BEST BID\n$29,501",
+                  fontName="Helvetica-Bold", fontSize=8, fillColor=C_GREEN, textAnchor="middle"))
+    d.add(String(ask_x, axis_y + 22, "BEST ASK\n$29,502",
+                  fontName="Helvetica-Bold", fontSize=8, fillColor=C_RUST, textAnchor="middle"))
+
+    # Spread bracket
+    bracket_y = axis_y + 40
+    d.add(Line(bid_x, bracket_y, ask_x, bracket_y, strokeColor=C_YELLOW, strokeWidth=2))
+    d.add(Line(bid_x, bracket_y - 4, bid_x, bracket_y + 4, strokeColor=C_YELLOW, strokeWidth=1.5))
+    d.add(Line(ask_x, bracket_y - 4, ask_x, bracket_y + 4, strokeColor=C_YELLOW, strokeWidth=1.5))
+    d.add(String((bid_x + ask_x)/2, bracket_y + 6, "SPREAD = $1.00",
+                  fontName="Helvetica-Bold", fontSize=8, fillColor=C_YELLOW, textAnchor="middle"))
+    d.add(String((bid_x + ask_x)/2, bracket_y - 8,
+                  "Anyone buying at the ask and immediately selling at the bid loses exactly this amount",
+                  fontName="Helvetica", fontSize=7, fillColor=C_MUTED, textAnchor="middle"))
+
+    d.add(String(dw/2, 4,
+                  "Figure 15 - The spread is the gap between the highest buyer and lowest seller. Tighter = more liquid market.",
+                  fontName="Helvetica-Oblique", fontSize=7,
+                  fillColor=C_MUTED, textAnchor="middle"))
+    return d
+
+
 def diagram_what_is_orderbook():
     """Visual of a real order book with bids and asks side by side."""
     dw, dh = W - 60*mm, 115*mm
@@ -1122,6 +1410,109 @@ def build_content():
              "Binance uses zero quantity as their deletion signal. We match that convention with an is_removal() method rather than adding a wrapper type."],
             ["Parsing location", "All in parse_levels()", "Parse at point of use",
              "If a string fails to parse as a number, that is a data error and belongs at the boundary where data enters the system, not scattered through business logic."],
+        ]),
+    ]
+
+    # -- Part 7: The Order Book --------------------------------------------------
+    story += [
+        PageBreak(),
+        P("Part 7 - orderbook/book.rs: The In-Memory Order Book", "h1"),
+        HR(),
+        P("This file is the heart of the entire system. "
+          "Everything else exists to feed data into this structure or to read from it. "
+          "It holds the current state of the market: every price level where someone "
+          "is willing to buy or sell, and exactly how much they are willing to trade at that price. "
+          "It gets updated thousands of times per second and read just as often.", "body"),
+        Space(8),
+        diagram_btreemap_vs_hashmap(),
+        Space(10),
+
+        P("Why the data structure choice is the most important decision in this file", "h2"),
+        P("We need to do two things constantly: update a specific price level by its price, "
+          "and find the best bid and best ask instantly. "
+          "These two requirements pull in different directions. "
+          "The structure we chose, called a BTreeMap, is a sorted dictionary. "
+          "You give it a price as the key and a quantity as the value. "
+          "It keeps all entries sorted by price at all times, automatically, with every insert and remove. "
+          "That sorting is what makes finding the best bid and ask free, "
+          "because they are always at the two ends of the sorted structure.", "body"),
+
+        P("What it looks like in memory", "h2"),
+        P("The bids side of the book is one BTreeMap where each key is a price and each value is "
+          "how many Bitcoin are available at that price. "
+          "The map is sorted lowest to highest, so the best bid, the highest buyer, "
+          "is always sitting at the very back of the map. "
+          "The asks side is identical in structure. "
+          "Because asks are also sorted lowest to highest, the best ask, "
+          "the cheapest seller, is always at the very front.", "body"),
+        Space(8),
+        diagram_book_memory_layout(),
+        Space(10),
+
+        P("What happens when an update arrives", "h2"),
+        P("Every update from Binance contains a list of changed price levels for bids "
+          "and a list for asks. For each one we do exactly one of two things. "
+          "If the quantity sent is greater than zero, we insert or overwrite that price in the map. "
+          "If the quantity is zero, we remove that price from the map entirely. "
+          "The BTreeMap handles both cases with the same operation: "
+          "insert adds a new entry or replaces an existing one, "
+          "remove deletes an entry if it exists and does nothing if it does not. "
+          "We never need to check whether an entry exists first.", "body"),
+        Space(8),
+        diagram_apply_update_flow(),
+        Space(10),
+
+        P("Finding the best bid and best ask", "h2"),
+        P("When an API request comes in asking for the current best bid, "
+          "we call one operation on the bids map: give me the last entry. "
+          "Because the map is sorted ascending by price, the last entry is always the highest price. "
+          "That is the best bid. Finding the best ask is the mirror image: "
+          "give me the first entry in the asks map, which is always the lowest price. "
+          "Neither operation scans the entire map. "
+          "The time it takes does not grow as the book gets larger.", "body"),
+
+        P("The spread", "h2"),
+        P("The spread is the difference between the best ask and the best bid. "
+          "It represents the cost of immediately buying and immediately selling: "
+          "if you bought at the best ask and sold at the best bid right after, "
+          "you would lose exactly the spread. "
+          "A tight spread means a healthy, liquid market. "
+          "A wide spread means the market is thin or uncertain. "
+          "We calculate it by subtracting the two prices and return None if either side "
+          "of the book is empty, because there is no spread without both sides.", "body"),
+        Space(8),
+        diagram_spread_visual(),
+        Space(10),
+
+        P("The clear method and when it gets used", "h2"),
+        P("The clear method wipes both maps completely and resets the sequence counter to zero. "
+          "This is called in two situations. "
+          "First, when the WebSocket reconnects after a drop, "
+          "because the stream of updates we receive is a new stream "
+          "and we cannot mix it with data from the old stream. "
+          "Second, when we detect a gap in the sequence numbers, "
+          "meaning we missed at least one update and our book is now incorrect. "
+          "In both cases the only safe response is to start completely fresh "
+          "by fetching a new snapshot from Binance's REST API and rebuilding.", "body"),
+
+        P("Why the book does not validate sequence numbers itself", "h2"),
+        P("The book's only job is to store and update price levels correctly. "
+          "It does not decide whether an update is valid or whether a gap occurred. "
+          "That decision lives in the manager, which we write next. "
+          "This split keeps the book simple, testable, and free of state machine logic. "
+          "You can test every method on the book without needing a WebSocket connection "
+          "or caring about Binance's sequencing protocol.", "body"),
+
+        Space(10),
+        tradeoff_table([
+            ["Price level storage", "BTreeMap<Decimal, Decimal>", "Vec<(Decimal, Decimal)>",
+             "A Vec would need to stay sorted on every insert, which is slow. BTreeMap stays sorted automatically and gives O(log n) insert, remove, and lookup."],
+            ["Finding best bid/ask", "next_back() / next() on BTreeMap", "Track separately in variables",
+             "Tracking best bid/ask in separate variables means you have to update them on every change and handle edge cases. BTreeMap gives you them for free as the first/last entry."],
+            ["Map key type", "Decimal", "String or f64",
+             "f64 keys would cause rounding collisions where two prices that look the same become different keys. String keys would work but require parsing on every lookup. Decimal is exact and sortable."],
+            ["Sequence validation", "Not in this file, done by manager", "Inside apply()",
+             "Mixing validation logic into the book would make it impossible to test book behavior independently. Separation means both can be tested in isolation."],
         ]),
     ]
 

@@ -1,3 +1,4 @@
+pub mod binance;
 pub mod client;
 
 // The event type that crosses the channel boundary between the WebSocket

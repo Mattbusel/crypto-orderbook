@@ -12,6 +12,11 @@ pub enum AppError {
     #[error("Failed to parse Binance message: {0}")]
     Parse(#[from] serde_json::Error),
 
+    // A price or quantity string from Binance could not be parsed as a number.
+    // Recovery: same as Parse — log and skip the frame.
+    #[error("Invalid numeric field from Binance: {0}")]
+    InvalidField(String),
+
     // The event sequence is broken — U != prev_u + 1.
     // Recovery: discard the book, re-fetch REST snapshot, re-sync.
     #[error("Order book sequence gap: expected {expected}, got {got}")]

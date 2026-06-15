@@ -290,6 +290,366 @@ def diagram_error_taxonomy():
     return d
 
 
+def diagram_manager_state_machine():
+    """Three state boxes with labeled transitions between them."""
+    dw, dh = W - 60*mm, 110*mm
+    d = Drawing(dw, dh)
+
+    d.add(String(dw/2, 102, "The Manager's Three States",
+                  fontName="Helvetica-Bold", fontSize=11,
+                  fillColor=C_WHITE, textAnchor="middle"))
+
+    bw, bh = 110, 32
+    states = [
+        (30,   42, "FETCHING",    "Asking Binance REST\nfor full snapshot.\nEvents queue up waiting.",    C_ACCENT),
+        (dw/2 - bw/2, 42, "HANDSHAKING", "Snapshot arrived.\nSearching events for\nfirst valid one.",   C_YELLOW),
+        (dw - bw - 30, 42, "LIVE",    "Applying every event.\nChecking sequence\ncontinuity.",            C_GREEN),
+    ]
+
+    centers = []
+    for bx, by, title, desc, color in states:
+        cx = bx + bw/2
+        centers.append((cx, by + bh/2))
+        d.add(Rect(bx, by, bw, bh, rx=6, ry=6,
+                    fillColor=C_DARK, strokeColor=color, strokeWidth=2))
+        d.add(String(cx, by + bh - 9, title,
+                      fontName="Helvetica-Bold", fontSize=9,
+                      fillColor=color, textAnchor="middle"))
+        for i, ln in enumerate(desc.split("\n")):
+            d.add(String(cx, by + bh - 18 - i*8, ln,
+                          fontName="Helvetica", fontSize=7,
+                          fillColor=C_MUTED, textAnchor="middle"))
+
+    def arrow(x1, y1, x2, y2, label, color, above=True):
+        d.add(Line(x1, y1, x2, y2, strokeColor=color, strokeWidth=1.5))
+        d.add(Polygon([x2, y2, x2-6, y2+3, x2-6, y2-3] if x2 > x1 else
+                       [x2, y2, x2+6, y2+3, x2+6, y2-3],
+                       fillColor=color, strokeColor=color))
+        mid_x = (x1 + x2) / 2
+        mid_y = (y1 + y2) / 2 + (8 if above else -10)
+        d.add(String(mid_x, mid_y, label,
+                      fontName="Helvetica", fontSize=7,
+                      fillColor=color, textAnchor="middle"))
+
+    # Forward arrows
+    arrow(centers[0][0] + bw/2, centers[0][1],
+          centers[1][0] - bw/2, centers[1][1],
+          "snapshot arrives", C_ACCENT)
+    arrow(centers[1][0] + bw/2, centers[1][1],
+          centers[2][0] - bw/2, centers[2][1],
+          "first valid event found", C_YELLOW)
+
+    # Reset arrows (all back to start)
+    reset_y = 30
+    for cx, cy in centers[1:]:
+        d.add(Line(cx, cy - bh/2, cx, reset_y, strokeColor=C_RUST, strokeWidth=1, strokeDashArray=[3,2]))
+    d.add(Line(centers[1][0], reset_y, centers[0][0], reset_y, strokeColor=C_RUST, strokeWidth=1, strokeDashArray=[3,2]))
+    d.add(Polygon([centers[0][0], reset_y, centers[0][0]+5, reset_y+3, centers[0][0]+5, reset_y-3],
+                   fillColor=C_RUST, strokeColor=C_RUST))
+    d.add(String(dw/2, reset_y + 6, "reconnect OR sequence gap OR handshake failure",
+                  fontName="Helvetica", fontSize=7, fillColor=C_RUST, textAnchor="middle"))
+
+    d.add(String(dw/2, 8,
+                  "Figure 16 - Any failure from any state resets to Fetching. There is no partial recovery.",
+                  fontName="Helvetica-Oblique", fontSize=7,
+                  fillColor=C_MUTED, textAnchor="middle"))
+    return d
+
+
+def diagram_sync_timeline():
+    """Horizontal timeline showing REST fetch overlapping with WS events."""
+    dw, dh = W - 60*mm, 85*mm
+    d = Drawing(dw, dh)
+
+    d.add(String(dw/2, 77, "Timeline: REST Snapshot and WebSocket Events Overlap",
+                  fontName="Helvetica-Bold", fontSize=11,
+                  fillColor=C_WHITE, textAnchor="middle"))
+
+    # Time axis
+    t0, t1 = 20, dw - 20
+    axis_y = 50
+    d.add(Line(t0, axis_y, t1, axis_y, strokeColor=C_BORDER, strokeWidth=1))
+    d.add(String(t0, axis_y - 10, "time", fontName="Helvetica", fontSize=7, fillColor=C_MUTED))
+
+    # REST fetch bar
+    rest_x1 = t0 + 10
+    rest_x2 = t0 + (t1 - t0) * 0.45
+    d.add(Rect(rest_x1, axis_y + 6, rest_x2 - rest_x1, 14,
+                fillColor=colors.HexColor("#1a2a3a"), strokeColor=C_ACCENT, strokeWidth=1.5))
+    d.add(String((rest_x1 + rest_x2)/2, axis_y + 16,
+                  "REST request in flight (100-300ms)",
+                  fontName="Helvetica", fontSize=7.5, fillColor=C_ACCENT, textAnchor="middle"))
+
+    # WS events bar
+    ws_x1 = t0 + 10
+    ws_x2 = t1 - 10
+    d.add(Rect(ws_x1, axis_y - 20, ws_x2 - ws_x1, 12,
+                fillColor=colors.HexColor("#1a3a1a"), strokeColor=C_GREEN, strokeWidth=1))
+    d.add(String((ws_x1 + ws_x2)/2, axis_y - 11,
+                  "WebSocket events arriving continuously",
+                  fontName="Helvetica", fontSize=7.5, fillColor=C_GREEN, textAnchor="middle"))
+
+    # Snapshot arrives marker
+    snap_x = rest_x2
+    d.add(Line(snap_x, axis_y - 24, snap_x, axis_y + 22,
+                strokeColor=C_YELLOW, strokeWidth=2, strokeDashArray=[4, 2]))
+    d.add(String(snap_x, axis_y + 24, "Snapshot\narrives",
+                  fontName="Helvetica-Bold", fontSize=7.5, fillColor=C_YELLOW, textAnchor="middle"))
+
+    # Zones
+    mid_x_left  = (ws_x1 + snap_x) / 2
+    mid_x_right = (snap_x + ws_x2) / 2
+
+    d.add(String(mid_x_left, axis_y - 30, "STALE ZONE",
+                  fontName="Helvetica-Bold", fontSize=7, fillColor=C_RUST, textAnchor="middle"))
+    d.add(String(mid_x_left, axis_y - 38, "events here may already be\ncaptured in the snapshot",
+                  fontName="Helvetica", fontSize=6.5, fillColor=C_MUTED, textAnchor="middle"))
+
+    d.add(String(mid_x_right, axis_y - 30, "FRESH ZONE",
+                  fontName="Helvetica-Bold", fontSize=7, fillColor=C_GREEN, textAnchor="middle"))
+    d.add(String(mid_x_right, axis_y - 38, "events here happened after\nthe snapshot was captured",
+                  fontName="Helvetica", fontSize=6.5, fillColor=C_MUTED, textAnchor="middle"))
+
+    d.add(String(dw/2, 4,
+                  "Figure 17 - The snapshot captures a moment in time. Events before that moment are already inside it.",
+                  fontName="Helvetica-Oblique", fontSize=7,
+                  fillColor=C_MUTED, textAnchor="middle"))
+    return d
+
+
+def diagram_snapshot_overlap():
+    """Visual of events queued up, some stale some fresh, relative to snapshot ID."""
+    dw, dh = W - 60*mm, 90*mm
+    d = Drawing(dw, dh)
+
+    d.add(String(dw/2, 82, "Events in the Queue When the Snapshot Arrives",
+                  fontName="Helvetica-Bold", fontSize=11,
+                  fillColor=C_WHITE, textAnchor="middle"))
+
+    # Snapshot ID indicator
+    snap_id = 1000
+    d.add(Rect(dw/2 - 70, 66, 140, 14, fillColor=colors.HexColor("#1a2a3a"),
+                strokeColor=C_ACCENT, strokeWidth=1.5, rx=3, ry=3))
+    d.add(String(dw/2, 76, f"Snapshot lastUpdateId = {snap_id}",
+                  fontName="Courier-Bold", fontSize=9, fillColor=C_ACCENT, textAnchor="middle"))
+
+    events = [
+        (980,  995,  "STALE",    C_RUST,   "u <= 1000: already in snapshot"),
+        (996,  1000, "STALE",    C_RUST,   "u <= 1000: already in snapshot"),
+        (1001, 1004, "VALID",    C_GREEN,  "U=1001 <= 1001, u=1004 >= 1001: FIRST VALID"),
+        (1005, 1008, "PENDING",  C_MUTED,  "Will be applied next in live mode"),
+        (1009, 1012, "PENDING",  C_MUTED,  "Will be applied next in live mode"),
+    ]
+
+    for i, (u_first, u_last, label, color, note) in enumerate(events):
+        y = 52 - i * 11
+        bg = colors.HexColor("#3a1010") if color == C_RUST else \
+             colors.HexColor("#1a3a1a") if color == C_GREEN else C_DARK
+        d.add(Rect(10, y, dw - 20, 10, fillColor=bg,
+                    strokeColor=color, strokeWidth=1.2 if color != C_MUTED else 0.5))
+        d.add(String(16,      y + 3, f"U={u_first}  u={u_last}",
+                      fontName="Courier", fontSize=8, fillColor=color))
+        d.add(String(dw/2,    y + 3, label,
+                      fontName="Helvetica-Bold", fontSize=7.5, fillColor=color, textAnchor="middle"))
+        d.add(String(dw - 14, y + 3, note,
+                      fontName="Helvetica", fontSize=6.5, fillColor=C_MUTED, textAnchor="end"))
+
+    d.add(String(dw/2, 4,
+                  "Figure 18 - Events with u <= 1000 are discarded. The first event where U <= 1001 AND u >= 1001 is the starting point.",
+                  fontName="Helvetica-Oblique", fontSize=7,
+                  fillColor=C_MUTED, textAnchor="middle"))
+    return d
+
+
+def diagram_handshake_rule():
+    """Decision flowchart for a single event during the handshake phase."""
+    dw, dh = W - 60*mm, 100*mm
+    d = Drawing(dw, dh)
+
+    d.add(String(dw/2, 92, "How We Decide What to Do With Each Event During Handshake",
+                  fontName="Helvetica-Bold", fontSize=11,
+                  fillColor=C_WHITE, textAnchor="middle"))
+
+    # Incoming event
+    d.add(Rect(dw/2 - 80, 76, 160, 14, fillColor=C_DARK,
+                strokeColor=C_ACCENT, strokeWidth=1.5, rx=3, ry=3))
+    d.add(String(dw/2, 86, "Event arrives:  U=1001, u=1004  |  snapshot_id=1000",
+                  fontName="Courier", fontSize=8, fillColor=C_ACCENT, textAnchor="middle"))
+
+    # Check 1
+    d1cx, d1cy = dw/2, 60
+    s = 10
+    d.add(Polygon([d1cx, d1cy+s, d1cx+s*2.5, d1cy, d1cx, d1cy-s, d1cx-s*2.5, d1cy],
+                   fillColor=colors.HexColor("#1a1a1a"), strokeColor=C_YELLOW, strokeWidth=1.5))
+    d.add(String(d1cx, d1cy + 3, "u <= snapshot_id?", fontName="Helvetica-Bold", fontSize=7.5,
+                  fillColor=C_YELLOW, textAnchor="middle"))
+    d.add(String(d1cx, d1cy - 4, "Is event fully stale?", fontName="Helvetica", fontSize=6.5,
+                  fillColor=C_MUTED, textAnchor="middle"))
+    d.add(Line(dw/2, 76, dw/2, 70, strokeColor=C_MUTED, strokeWidth=1))
+
+    # YES = discard (right)
+    d.add(Line(d1cx + s*2.5, d1cy, dw - 20, d1cy, strokeColor=C_RUST, strokeWidth=1.2))
+    d.add(String((d1cx + s*2.5 + dw - 20)/2, d1cy + 5, "YES", fontName="Helvetica-Bold", fontSize=7, fillColor=C_RUST, textAnchor="middle"))
+    d.add(Rect(dw - 90, d1cy - 12, 80, 12, fillColor=colors.HexColor("#3a1010"),
+                strokeColor=C_RUST, strokeWidth=1, rx=2, ry=2))
+    d.add(String(dw - 50, d1cy - 6, "DISCARD  (skip)", fontName="Helvetica-Bold", fontSize=7.5,
+                  fillColor=C_RUST, textAnchor="middle"))
+
+    # NO arrow down
+    d.add(Line(d1cx, d1cy - s, d1cx, 36, strokeColor=C_MUTED, strokeWidth=1))
+    d.add(String(d1cx + 5, d1cy - s - 6, "NO", fontName="Helvetica-Bold", fontSize=7, fillColor=C_MUTED))
+
+    # Check 2
+    d2cx, d2cy = dw/2, 30
+    d.add(Polygon([d2cx, d2cy+s, d2cx+s*2.5, d2cy, d2cx, d2cy-s, d2cx-s*2.5, d2cy],
+                   fillColor=colors.HexColor("#1a1a1a"), strokeColor=C_YELLOW, strokeWidth=1.5))
+    d.add(String(d2cx, d2cy + 3, "U > snapshot_id + 1?", fontName="Helvetica-Bold", fontSize=7.5,
+                  fillColor=C_YELLOW, textAnchor="middle"))
+    d.add(String(d2cx, d2cy - 4, "Is there a gap?", fontName="Helvetica", fontSize=6.5,
+                  fillColor=C_MUTED, textAnchor="middle"))
+
+    # YES = gap (right)
+    d.add(Line(d2cx + s*2.5, d2cy, dw - 20, d2cy, strokeColor=C_RUST, strokeWidth=1.2))
+    d.add(String((d2cx + s*2.5 + dw - 20)/2, d2cy + 5, "YES", fontName="Helvetica-Bold", fontSize=7, fillColor=C_RUST, textAnchor="middle"))
+    d.add(Rect(dw - 90, d2cy - 12, 80, 12, fillColor=colors.HexColor("#3a1010"),
+                strokeColor=C_RUST, strokeWidth=1, rx=2, ry=2))
+    d.add(String(dw - 50, d2cy - 6, "RESYNC  (start over)", fontName="Helvetica-Bold", fontSize=7.5,
+                  fillColor=C_RUST, textAnchor="middle"))
+
+    # NO = valid
+    d.add(Line(d2cx, d2cy - s, d2cx, 12, strokeColor=C_GREEN, strokeWidth=1.5))
+    d.add(String(d2cx + 5, d2cy - s - 6, "NO", fontName="Helvetica-Bold", fontSize=7, fillColor=C_GREEN))
+    d.add(Rect(d2cx - 65, 4, 130, 12, fillColor=colors.HexColor("#1a3a1a"),
+                strokeColor=C_GREEN, strokeWidth=1.5, rx=2, ry=2))
+    d.add(String(d2cx, 10, "APPLY  (this is our starting point)", fontName="Helvetica-Bold", fontSize=7.5,
+                  fillColor=C_GREEN, textAnchor="middle"))
+
+    d.add(String(dw - 10, 4, "Figure 19",
+                  fontName="Helvetica-Oblique", fontSize=7, fillColor=C_MUTED, textAnchor="end"))
+    return d
+
+
+def diagram_sequence_continuity():
+    """Shows live mode sequence check: U of next must equal prev u + 1."""
+    dw, dh = W - 60*mm, 80*mm
+    d = Drawing(dw, dh)
+
+    d.add(String(dw/2, 72, "Live Mode: Every Event Must Follow the Previous One",
+                  fontName="Helvetica-Bold", fontSize=11,
+                  fillColor=C_WHITE, textAnchor="middle"))
+
+    # Good sequence
+    d.add(String(20, 62, "Continuous delivery - each U picks up where previous u left off:",
+                  fontName="Helvetica-Bold", fontSize=8.5, fillColor=C_GREEN))
+
+    good = [(1001, 1004), (1005, 1008), (1009, 1011), (1012, 1015)]
+    bx, by, bw, bh = 20, 46, 75, 14
+    for i, (U, u) in enumerate(good):
+        x = bx + i * (bw + 4)
+        d.add(Rect(x, by, bw, bh, fillColor=colors.HexColor("#1a3a1a"),
+                    strokeColor=C_GREEN, strokeWidth=1, rx=2, ry=2))
+        d.add(String(x + bw/2, by + 9, f"U={U}", fontName="Courier", fontSize=8,
+                      fillColor=C_GREEN, textAnchor="middle"))
+        d.add(String(x + bw/2, by + 2, f"u={u}", fontName="Courier", fontSize=8,
+                      fillColor=C_WHITE, textAnchor="middle"))
+        if i < len(good) - 1:
+            nx = x + bw
+            d.add(Line(nx, by + bh/2, nx + 4, by + bh/2, strokeColor=C_GREEN, strokeWidth=1))
+            d.add(String(nx + 2, by + bh/2 + 3, "+1", fontName="Helvetica", fontSize=6,
+                          fillColor=C_GREEN, textAnchor="middle"))
+    d.add(String(bx + 4*(bw+4) + 8, by + bh/2 + 2, "OK", fontName="Helvetica-Bold",
+                  fontSize=9, fillColor=C_GREEN))
+
+    # Bad sequence
+    d.add(String(20, 32, "Gap detected - U of incoming does not follow previous u:",
+                  fontName="Helvetica-Bold", fontSize=8.5, fillColor=C_RUST))
+
+    bad = [(1001, 1004), (1005, 1008), (1010, 1013)]
+    for i, (U, u) in enumerate(bad):
+        x = bx + i * (bw + 4)
+        is_bad = (i == 2)
+        color = C_RUST if is_bad else C_GREEN
+        bg    = colors.HexColor("#3a1010") if is_bad else colors.HexColor("#1a3a1a")
+        d.add(Rect(x, 14, bw, bh, fillColor=bg,
+                    strokeColor=color, strokeWidth=1.5 if is_bad else 1, rx=2, ry=2))
+        d.add(String(x + bw/2, 23, f"U={U}", fontName="Courier", fontSize=8,
+                      fillColor=color, textAnchor="middle"))
+        d.add(String(x + bw/2, 16, f"u={u}", fontName="Courier", fontSize=8,
+                      fillColor=C_WHITE, textAnchor="middle"))
+        if i < len(bad) - 1:
+            nx = x + bw
+            gap_color = C_RUST if i == 1 else C_GREEN
+            d.add(Line(nx, 14 + bh/2, nx + 4, 14 + bh/2, strokeColor=gap_color, strokeWidth=1))
+
+    d.add(String(bx + 3*(bw+4) + 8, 14 + bh/2 + 2, "GAP!", fontName="Helvetica-Bold",
+                  fontSize=9, fillColor=C_RUST))
+    d.add(String(bx + 3*(bw+4) + 8, 14 + bh/2 - 6, "expected U=1009\ngot U=1010",
+                  fontName="Helvetica", fontSize=6.5, fillColor=C_MUTED))
+
+    d.add(String(dw/2, 4,
+                  "Figure 20 - U of each event must equal the previous u plus one. Any other value means an update was lost.",
+                  fontName="Helvetica-Oblique", fontSize=7,
+                  fillColor=C_MUTED, textAnchor="middle"))
+    return d
+
+
+def diagram_rwlock_readers_writer():
+    """Shows multiple API readers and one manager writer, and the RwLock gating."""
+    dw, dh = W - 60*mm, 90*mm
+    d = Drawing(dw, dh)
+
+    d.add(String(dw/2, 82, "RwLock: Many Readers, One Writer",
+                  fontName="Helvetica-Bold", fontSize=11,
+                  fillColor=C_WHITE, textAnchor="middle"))
+
+    # Book in the center
+    bk_x, bk_y, bk_w, bk_h = dw/2 - 45, 30, 90, 26
+    d.add(Rect(bk_x, bk_y, bk_w, bk_h, fillColor=C_DARK,
+                strokeColor=C_GREEN, strokeWidth=2, rx=4, ry=4))
+    d.add(String(bk_x + bk_w/2, bk_y + 17, "Order Book",
+                  fontName="Helvetica-Bold", fontSize=9, fillColor=C_GREEN, textAnchor="middle"))
+    d.add(String(bk_x + bk_w/2, bk_y + 7, "Arc<RwLock<OrderBook>>",
+                  fontName="Courier", fontSize=6.5, fillColor=C_MUTED, textAnchor="middle"))
+
+    # API readers (right side)
+    readers = [
+        (dw - 90, 62, "GET /book/top"),
+        (dw - 90, 46, "GET /book/spread"),
+        (dw - 90, 30, "GET /book/bids"),
+    ]
+    for rx2, ry, label in readers:
+        d.add(Rect(rx2, ry, 80, 12, fillColor=C_DARK,
+                    strokeColor=C_ACCENT, strokeWidth=1, rx=2, ry=2))
+        d.add(String(rx2 + 40, ry + 5, label, fontName="Helvetica", fontSize=7.5,
+                      fillColor=C_ACCENT, textAnchor="middle"))
+        d.add(Line(rx2, ry + 6, bk_x + bk_w, bk_y + bk_h/2,
+                    strokeColor=C_ACCENT, strokeWidth=1, strokeDashArray=[3,2]))
+
+    d.add(String(dw - 50, 76, "READ (concurrent, fast)",
+                  fontName="Helvetica-Bold", fontSize=7, fillColor=C_ACCENT, textAnchor="middle"))
+
+    # Manager writer (left side)
+    d.add(Rect(10, 36, 90, 20, fillColor=C_DARK,
+                strokeColor=C_YELLOW, strokeWidth=1.5, rx=2, ry=2))
+    d.add(String(55, 50, "Manager", fontName="Helvetica-Bold", fontSize=9,
+                  fillColor=C_YELLOW, textAnchor="middle"))
+    d.add(String(55, 41, "apply(update)", fontName="Courier", fontSize=7.5,
+                  fillColor=C_MUTED, textAnchor="middle"))
+    d.add(Line(100, 46, bk_x, bk_y + bk_h/2,
+                strokeColor=C_YELLOW, strokeWidth=2))
+    d.add(String(10, 28, "WRITE (exclusive, must wait for readers)",
+                  fontName="Helvetica-Bold", fontSize=7, fillColor=C_YELLOW))
+
+    d.add(String(dw/2, 14, "Many readers can read at the same time.",
+                  fontName="Helvetica", fontSize=7.5, fillColor=C_WHITE, textAnchor="middle"))
+    d.add(String(dw/2, 6, "The writer waits until all current readers finish, then writes alone.",
+                  fontName="Helvetica", fontSize=7.5, fillColor=C_MUTED, textAnchor="middle"))
+
+    d.add(String(dw - 10, 2, "Figure 21",
+                  fontName="Helvetica-Oblique", fontSize=7, fillColor=C_MUTED, textAnchor="end"))
+    return d
+
+
 def diagram_btreemap_vs_hashmap():
     """Side by side: HashMap (unordered) vs BTreeMap (sorted), showing why sorted wins."""
     dw, dh = W - 60*mm, 105*mm
@@ -1513,6 +1873,126 @@ def build_content():
              "f64 keys would cause rounding collisions where two prices that look the same become different keys. String keys would work but require parsing on every lookup. Decimal is exact and sortable."],
             ["Sequence validation", "Not in this file, done by manager", "Inside apply()",
              "Mixing validation logic into the book would make it impossible to test book behavior independently. Separation means both can be tested in isolation."],
+        ]),
+    ]
+
+    # -- Part 8: The Manager ----------------------------------------------------
+    story += [
+        PageBreak(),
+        P("Part 8 - orderbook/manager.rs: The Sync State Machine", "h1"),
+        HR(),
+        P("The manager is the most important piece in the system. "
+          "Everything else is either feeding data toward it or reading results from it. "
+          "Its one job is to decide whether each incoming update from Binance is safe to "
+          "apply to the order book or not. That sounds simple, but getting it wrong means "
+          "your book silently diverges from reality and nobody knows until trades go wrong.", "body"),
+        Space(8),
+        diagram_manager_state_machine(),
+        Space(10),
+
+        P("The three states the manager can be in", "h2"),
+        P("At any moment the manager is in exactly one of three situations.", "body"),
+        P("The first situation: Fetching. We need a baseline before we can apply any changes. "
+          "We are asking Binance's REST API for the current full book. "
+          "Events from the WebSocket are arriving and sitting in the queue, waiting. "
+          "We are not touching the order book yet.", "body"),
+        P("The second situation: Handshaking. The snapshot arrived. "
+          "Now we need to find the first WebSocket event that picks up exactly where "
+          "the snapshot left off. Some events in the queue are stale because "
+          "they arrived before the snapshot was captured. We skip those. "
+          "We are looking for the one event that bridges the gap.", "body"),
+        P("The third situation: Live. We found our starting point. "
+          "Every update now gets checked to make sure it follows the previous one "
+          "in sequence, then applied to the book. This is the normal operating state.", "body"),
+        Space(8),
+        diagram_sync_timeline(),
+        Space(10),
+
+        P("Why the snapshot and WebSocket stream overlap in time", "h2"),
+        P("You cannot pause Binance's WebSocket while you fetch the snapshot. "
+          "It keeps sending updates no matter what. "
+          "So by the time the REST snapshot arrives, the WebSocket has already sent "
+          "some updates that happened after the snapshot was taken. "
+          "Those updates are sitting in the queue. "
+          "Some of the updates in the queue describe changes that are already captured "
+          "in the snapshot. Some describe changes that happened after. "
+          "The handshake process sorts out which is which using the sequence numbers.", "body"),
+        Space(8),
+        diagram_snapshot_overlap(),
+        Space(10),
+
+        P("The exact rule for finding the first valid event", "h2"),
+        P("Every update from Binance has two sequence numbers. "
+          "U is the ID of the first change bundled in that update. "
+          "u is the ID of the last change bundled in that update. "
+          "The snapshot has a lastUpdateId.", "body"),
+        P("An event is stale if its u is less than or equal to the snapshot's lastUpdateId. "
+          "All the changes in that event are already in the snapshot. Discard it.", "body"),
+        P("An event has a gap if its U is greater than the snapshot's lastUpdateId plus one. "
+          "There are one or more missing updates between the snapshot and this event. "
+          "The book is unrecoverable. Start the whole process over.", "body"),
+        P("An event is the valid first event if it passes both checks: "
+          "u is greater than lastUpdateId, AND U is less than or equal to lastUpdateId plus one. "
+          "This event either overlaps with the snapshot or directly follows it. Apply it.", "body"),
+        Space(8),
+        diagram_handshake_rule(),
+        Space(10),
+
+        P("Live mode: checking every event in sequence", "h2"),
+        P("Once live, the check is simpler. "
+          "Every event's U must equal the previous event's u plus one. "
+          "In plain terms: the first change in this batch must be exactly one after "
+          "the last change in the previous batch. No skipping allowed. "
+          "If the numbers do not line up, we missed something and the book is wrong. "
+          "We log it, clear the book, and start the whole sync process over.", "body"),
+        Space(8),
+        diagram_sequence_continuity(),
+        Space(10),
+
+        P("Why we use std::sync::RwLock instead of tokio's version", "h2"),
+        P("The book is shared between the manager and the API layer. "
+          "Multiple API requests can read the book at the same time, "
+          "which is fine because reads do not change anything. "
+          "But only the manager writes, and it cannot write while anyone is reading. "
+          "An RwLock handles this: many readers at once are allowed, "
+          "one writer at a time, and a writer blocks until all readers finish.", "body"),
+        P("Tokio has its own version of RwLock designed for async code. "
+          "We do not use it here because applying an update to the book is pure computation. "
+          "It takes microseconds, has no network calls, and never pauses waiting for anything. "
+          "The standard version is simpler and faster for pure computation. "
+          "The rule we never break: take the lock, do the work, release it. "
+          "Never wait for the network while holding it.", "body"),
+        Space(8),
+        diagram_rwlock_readers_writer(),
+        Space(10),
+
+        P("The HTTP client and why we create it once", "h2"),
+        P("We use reqwest to fetch the snapshot from Binance's REST API. "
+          "A reqwest client holds a pool of open network connections underneath. "
+          "Creating a new client for every snapshot fetch would mean "
+          "opening and closing a TCP connection every time, which is slow. "
+          "Creating it once at startup and reusing it means the connection "
+          "is already warm when we need it, even on the fifth resync.", "body"),
+
+        P("The retry loop on snapshot fetch", "h2"),
+        P("If the REST request fails, we wait and try again. "
+          "The wait doubles each attempt and caps at 30 seconds, "
+          "for the same reason as the WebSocket reconnect backoff: "
+          "hammering a struggling server makes it worse, not better. "
+          "We never give up on the snapshot fetch entirely. "
+          "If Binance's REST is down, we wait. "
+          "There is no other way to get the baseline we need.", "body"),
+
+        Space(10),
+        tradeoff_table([
+            ["Lock type", "std::sync::RwLock", "tokio::sync::RwLock",
+             "Book operations are pure computation with no await points. std::sync is simpler and faster when you never await inside the lock."],
+            ["Snapshot buffering", "mpsc channel's internal queue", "Explicit Vec buffer",
+             "While we await the REST call, Tokio suspends our task and the WS client keeps sending into the channel. The channel queues them automatically. No extra buffer needed."],
+            ["Reconnect handling", "Return from run_live() and restart loop", "Separate reconnect task",
+             "Making reconnect a loop restart rather than a signal keeps all state machine transitions in one place and eliminates race conditions between two concurrent tasks."],
+            ["Snapshot gap recovery", "Return None from handshake, restart", "Apply partial snapshot",
+             "A gap before the first valid event means we cannot trust the book state. The only safe response is discard everything and start fresh."],
         ]),
     ]
 

@@ -214,8 +214,13 @@ impl Manager {
     }
 
     async fn fetch_snapshot(&self) -> Result<Snapshot> {
+        // REST_BASE lets the snapshot come from another Binance deployment
+        // (e.g. https://api.binance.us where binance.com is geo-blocked).
+        let rest_base = std::env::var("REST_BASE")
+            .unwrap_or_else(|_| "https://api.binance.com".into());
         let url = format!(
-            "https://api.binance.com/api/v3/depth?symbol={}&limit=5000",
+            "{}/api/v3/depth?symbol={}&limit=5000",
+            rest_base.trim_end_matches('/'),
             self.symbol
         );
 

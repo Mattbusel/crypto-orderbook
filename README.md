@@ -14,17 +14,42 @@ Building a local order book from an exchange feed is mostly about the edge cases
 - **Push updates**: every applied diff broadcasts a compact top-of-book JSON message to `/ws/book` subscribers; slow clients skip ahead instead of buffering.
 - **Prometheus metrics**: events, reconnects, snapshots, sequence gaps, updates applied, book depth, spread, VWAP and volume.
 
-## Quick start
+## Install
+
+### Download (no Rust needed)
+
+Grab the file for your system from the [latest release](https://github.com/Mattbusel/crypto-orderbook/releases/latest):
+
+| System | File |
+|--------|------|
+| Windows | `crypto-orderbook-vX.Y.Z-x86_64-pc-windows-msvc.zip` |
+| macOS (Apple Silicon) | `crypto-orderbook-vX.Y.Z-aarch64-apple-darwin.tar.gz` |
+| macOS (Intel) | `crypto-orderbook-vX.Y.Z-x86_64-apple-darwin.tar.gz` |
+| Linux (x86_64) | `crypto-orderbook-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
+
+Unzip it and run `crypto-orderbook` (`crypto-orderbook.exe` on Windows) from a terminal. `crypto-orderbook --help` lists the settings. `SHA256SUMS.txt` in the release lets you check the download.
+
+The binaries are not code-signed. Windows SmartScreen may say "unknown publisher": click **More info**, then **Run anyway**. On macOS, if it is blocked, right-click the file and choose **Open** (or run `xattr -d com.apple.quarantine crypto-orderbook`).
+
+### With Cargo
+
+```sh
+cargo install crypto-orderbook
+```
+
+### From source
 
 Requires a recent stable Rust toolchain.
 
 ```sh
 git clone https://github.com/Mattbusel/crypto-orderbook
 cd crypto-orderbook
-RUST_LOG=info cargo run --release
+cargo run --release
 ```
 
-Then, once `/health` reports `synced: true`:
+## Quick start
+
+Start it with no arguments (`crypto-orderbook`, or `cargo run --release` from a clone). Then, once `/health` reports `synced: true`:
 
 ```sh
 curl localhost:3000/health
@@ -58,8 +83,18 @@ All settings come from environment variables (`src/config.rs`).
 | `API_PORT` | `3000` | HTTP port |
 | `WS_BASE` | `wss://stream.binance.com:9443/ws/<symbol>@depth` | Depth diff stream |
 | `TRADE_WS_BASE` | `wss://stream.binance.com:9443/ws/<symbol>@trade` | Trade stream for VWAP |
+| `REST_BASE` | `https://api.binance.com` | REST base for the depth snapshot |
 | `CHANNEL_BUFFER` | `10000` | Events buffered while the snapshot is fetched |
-| `RUST_LOG` | unset | `tracing` filter, e.g. `info` |
+| `RUST_LOG` | `info` | `tracing` filter, e.g. `debug` |
+
+`binance.com` answers `451 Unavailable For Legal Reasons` from some regions, including the US. Point it at Binance.US instead:
+
+```sh
+REST_BASE=https://api.binance.us \
+WS_BASE=wss://stream.binance.us:9443/ws/btcusdt@depth \
+TRADE_WS_BASE=wss://stream.binance.us:9443/ws/btcusdt@trade \
+crypto-orderbook
+```
 
 ## API
 
@@ -102,8 +137,7 @@ Binance @trade WS ─> ws::client ─mpsc─> trades::TradeManager ─> Arc<RwLo
 ## Limitations
 
 - One symbol per process.
-- Binance spot only. The snapshot URL is hard-coded to `https://api.binance.com`; the `REST_BASE` variable is read but not used by the snapshot request. `api.binance.com` is not reachable from every region.
+- Binance spot only (binance.com or Binance.US via the variables above).
 - The book is behind a `std::sync::RwLock`; this is a correctness-first design, not a latency-optimized matching engine.
-- No CI workflow is set up in this repository.
 
 This is market data infrastructure, not a trading system. It places no orders. Research and educational code, not financial advice.

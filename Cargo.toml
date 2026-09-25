@@ -1,7 +1,15 @@
 [package]
 name = "crypto-orderbook"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+description = "Live, correctly sequenced Binance spot order book served over HTTP, WebSocket and Prometheus"
+license = "MIT"
+repository = "https://github.com/Mattbusel/crypto-orderbook"
+homepage = "https://github.com/Mattbusel/crypto-orderbook"
+readme = "README.md"
+keywords = ["orderbook", "binance", "crypto", "websocket", "market-data"]
+categories = ["command-line-utilities", "finance"]
+exclude = ["docs/", "Dockerfile"]
 
 [dependencies]
 # Async runtime — use full during dev, narrow features before prod

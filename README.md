@@ -1,0 +1,109 @@
+# crypto-orderbook
+
+A Rust service that keeps a live, correctly sequenced Binance spot order book in memory and serves it over HTTP, WebSocket and Prometheus.
+
+Building a local order book from an exchange feed is mostly about the edge cases: the REST snapshot and the WebSocket diff stream have to be stitched together by update ID, gaps must force a resync, and reconnects must not leave stale levels behind. This project implements Binance's documented snapshot-plus-diff procedure end to end with Tokio and Axum, and exposes the result as a small read-only API.
+
+## Features
+
+- **Binance depth sync** (`src/orderbook/manager.rs`): fetch a REST snapshot (`/api/v3/depth?limit=5000`), discard stale buffered diffs, find the first event that bridges the snapshot, then apply diffs in live mode with a sequence-continuity check. Any gap or reconnect clears the book and restarts the cycle.
+- **Circuit breaker** on the snapshot request: opens after 5 consecutive failures, cools down for 30 s, then lets one probe through.
+- **Resilient WebSocket client** (`src/ws/client.rs`): reconnects with exponential backoff (1 s doubling to a 30 s cap, plus jitter) and signals the manager so it resyncs.
+- **Exact decimals**: prices and quantities are `rust_decimal::Decimal`, stored in `BTreeMap`s per side.
+- **Derived values**: spread, micro-price (size-weighted mid), top-N depth imbalance, and a rolling 1-minute VWAP and volume from the `@trade` stream.
+- **Push updates**: every applied diff broadcasts a compact top-of-book JSON message to `/ws/book` subscribers; slow clients skip ahead instead of buffering.
+- **Prometheus metrics**: events, reconnects, snapshots, sequence gaps, updates applied, book depth, spread, VWAP and volume.
+
+## Quick start
+
+Requires a recent stable Rust toolchain.
+
+```sh
+git clone https://github.com/Mattbusel/crypto-orderbook
+cd crypto-orderbook
+RUST_LOG=info cargo run --release
+```
+
+Then, once `/health` reports `synced: true`:
+
+```sh
+curl localhost:3000/health
+curl localhost:3000/book/best
+curl "localhost:3000/book/snapshot?depth=10"
+curl "localhost:3000/book/imbalance?depth=20"
+curl localhost:3000/book/vwap
+curl localhost:3000/metrics
+```
+
+Or with Docker (multi-stage build into a distroless image):
+
+```sh
+docker build -t crypto-orderbook .
+docker run --rm -p 3000:3000 -e SYMBOL=ETHUSDT crypto-orderbook
+```
+
+Run the integration tests (they start the Axum router on a random port against an in-memory book; no network access to Binance needed):
+
+```sh
+cargo test
+```
+
+## Configuration
+
+All settings come from environment variables (`src/config.rs`).
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `SYMBOL` | `BTCUSDT` | Trading pair to track |
+| `API_PORT` | `3000` | HTTP port |
+| `WS_BASE` | `wss://stream.binance.com:9443/ws/<symbol>@depth` | Depth diff stream |
+| `TRADE_WS_BASE` | `wss://stream.binance.com:9443/ws/<symbol>@trade` | Trade stream for VWAP |
+| `CHANNEL_BUFFER` | `10000` | Events buffered while the snapshot is fetched |
+| `RUST_LOG` | unset | `tracing` filter, e.g. `info` |
+
+## API
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /health` | `200` with depth and last update ID once synced, `503` while syncing |
+| `GET /book/best` | best bid, best ask, spread, micro-price |
+| `GET /book/snapshot?depth=N` | top N levels per side (default 20, capped at 100) |
+| `GET /book/bids?depth=N`, `GET /book/asks?depth=N` | one side only |
+| `GET /book/spread` | best ask minus best bid |
+| `GET /book/midprice` | micro-price: `(ask * bid_qty + bid * ask_qty) / (bid_qty + ask_qty)` |
+| `GET /book/imbalance?depth=N` | `(bid_qty - ask_qty) / (bid_qty + ask_qty)` over the top N levels, with a text label |
+| `GET /book/vwap` | rolling 1-minute VWAP and volume |
+| `GET /metrics` | Prometheus text format |
+| `GET /ws/book` | WebSocket; one JSON top-of-book message per applied update |
+
+Every request has a 10 second timeout.
+
+## How it works
+
+```
+Binance @depth WS ─> ws::client ─mpsc─> orderbook::Manager ─> Arc<RwLock<OrderBook>> ─> Axum routes
+                                            │  (snapshot, handshake, live)              
+Binance REST depth ─────────────────────────┘                └─broadcast─> /ws/book subscribers
+Binance @trade WS ─> ws::client ─mpsc─> trades::TradeManager ─> Arc<RwLock<VwapWindow>> ─> /book/vwap
+```
+
+| Path | Role |
+|------|------|
+| `src/main.rs` | wires channels, tasks and the HTTP server; graceful Ctrl-C |
+| `src/ws/client.rs`, `src/ws/binance.rs` | WebSocket actor and Binance message parsing |
+| `src/orderbook/manager.rs` | snapshot fetch, handshake, live sequencing, circuit breaker |
+| `src/orderbook/book.rs` | `OrderBook`: BTreeMap sides, spread, micro-price, imbalance |
+| `src/trades/` | trade stream consumer and time-windowed VWAP |
+| `src/api/` | REST routes and WebSocket push |
+| `src/metrics.rs` | Prometheus registry |
+| `tests/api_integration.rs` | HTTP-level tests of the API |
+| `docs/crypto_orderbook_design.pdf` | design document (generated by `docs/generate_pdf.py`) |
+
+## Limitations
+
+- One symbol per process.
+- Binance spot only. The snapshot URL is hard-coded to `https://api.binance.com`; the `REST_BASE` variable is read but not used by the snapshot request. `api.binance.com` is not reachable from every region.
+- The book is behind a `std::sync::RwLock`; this is a correctness-first design, not a latency-optimized matching engine.
+- No CI workflow is set up in this repository.
+
+This is market data infrastructure, not a trading system. It places no orders. Research and educational code, not financial advice.

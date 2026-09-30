@@ -16,36 +16,18 @@ Building a local order book from an exchange feed is mostly about the edge cases
 
 ## Install
 
-### Download (no Rust needed)
-
-Grab the file for your system from the [latest release](https://gitlab.com/mattbusel/crypto-orderbook/-/releases):
-
-| System | File |
-|--------|------|
-| Windows | `crypto-orderbook-vX.Y.Z-x86_64-pc-windows-msvc.zip` |
-| macOS (Apple Silicon) | `crypto-orderbook-vX.Y.Z-aarch64-apple-darwin.tar.gz` |
-| macOS (Intel) | `crypto-orderbook-vX.Y.Z-x86_64-apple-darwin.tar.gz` |
-| Linux (x86_64) | `crypto-orderbook-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
-
-Unzip it and run `crypto-orderbook` (`crypto-orderbook.exe` on Windows) from a terminal. `crypto-orderbook --help` lists the settings. `SHA256SUMS.txt` in the release lets you check the download.
-
-The binaries are not code-signed. Windows SmartScreen may say "unknown publisher": click **More info**, then **Run anyway**. On macOS, if it is blocked, right-click the file and choose **Open** (or run `xattr -d com.apple.quarantine crypto-orderbook`).
-
-### With Cargo
+**Linux** (x86_64, Ubuntu 20.04+ / Debian 11+). One line, no dependencies, installs to `~/.local/bin`:
 
 ```sh
-cargo install crypto-orderbook
+mkdir -p ~/.local/bin && curl -fsSL https://gitlab.com/mattbusel/crypto-orderbook/-/releases/permalink/latest/downloads/crypto-orderbook-linux-x86_64.tar.gz | tar xz --strip-components=1 -C ~/.local/bin --wildcards '*/crypto-orderbook'
 ```
 
-### From source
+| Other systems | |
+|---|---|
+| **Windows** | [Download crypto-orderbook-windows-x86_64.exe](https://gitlab.com/mattbusel/crypto-orderbook/-/releases/permalink/latest/downloads/crypto-orderbook-windows-x86_64.exe) and run it. (Unsigned, so SmartScreen may ask: *More info*, then *Run anyway*.) |
+| **macOS, or from source** | `cargo install --locked crypto-orderbook` |
 
-Requires a recent stable Rust toolchain.
-
-```sh
-git clone https://gitlab.com/mattbusel/crypto-orderbook
-cd crypto-orderbook
-cargo run --release
-```
+TLS is built in (rustls), so the Linux download needs no system OpenSSL. Every release, with SHA-256 checksums: [Releases](https://gitlab.com/mattbusel/crypto-orderbook/-/releases).
 
 ## Quick start
 

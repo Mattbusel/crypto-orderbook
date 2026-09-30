@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.1] - 2026-09-30
+
+- TLS through rustls instead of the system OpenSSL, so one Linux build runs on every distribution (checked live against Binance.US).
+- Linux x86_64 release builds from GitLab CI; downloads and links now point at GitLab.
+
 ## 0.2.0 (2026-09-25)
 
 - Prebuilt binaries for Windows, macOS (Apple Silicon and Intel) and Linux on every GitHub Release, with SHA256SUMS.txt.

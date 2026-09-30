@@ -1,6 +1,6 @@
 [package]
 name = "crypto-orderbook"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Live, correctly sequenced Binance spot order book served over HTTP, WebSocket and Prometheus"
 license = "MIT"
@@ -16,7 +16,7 @@ exclude = ["docs/", "Dockerfile"]
 tokio = { version = "1", features = ["full"] }
 
 # WebSocket — async wrapper around tungstenite, integrates with tokio I/O
-tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 
 # Stream/sink combinators for WebSocket frames
 futures-util = "0.3"
@@ -30,7 +30,7 @@ rust_decimal = { version = "1", features = ["serde-with-str"] }
 rust_decimal_macros = "1"
 
 # HTTP client for fetching REST snapshots from Binance
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Typed error enums with std::error::Error derive
 thiserror = "1"

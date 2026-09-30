@@ -18,7 +18,7 @@ Building a local order book from an exchange feed is mostly about the edge cases
 
 ### Download (no Rust needed)
 
-Grab the file for your system from the [latest release](https://github.com/Mattbusel/crypto-orderbook/releases/latest):
+Grab the file for your system from the [latest release](https://gitlab.com/mattbusel/crypto-orderbook/-/releases):
 
 | System | File |
 |--------|------|
@@ -42,7 +42,7 @@ cargo install crypto-orderbook
 Requires a recent stable Rust toolchain.
 
 ```sh
-git clone https://github.com/Mattbusel/crypto-orderbook
+git clone https://gitlab.com/mattbusel/crypto-orderbook
 cd crypto-orderbook
 cargo run --release
 ```

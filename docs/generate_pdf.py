@@ -1755,7 +1755,7 @@ def build():
         SP(20),
         HR(),
         P("Built with Rust 1.78 + Tokio 1 + Axum 0.7 + Prometheus 0.13", "muted"),
-        P("github.com/Mattbusel/crypto-orderbook", "muted"),
+        P("gitlab.com/mattbusel/crypto-orderbook", "muted"),
     ]
 
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)

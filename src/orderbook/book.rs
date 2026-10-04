@@ -178,6 +178,7 @@ mod tests {
         DepthUpdate {
             first_update_id: first,
             last_update_id: last,
+            prev_last_update_id: None,
             bids: bids.into_iter().map(|(p, q)| ParsedLevel { price: p, quantity: q }).collect(),
             asks: asks.into_iter().map(|(p, q)| ParsedLevel { price: p, quantity: q }).collect(),
         }

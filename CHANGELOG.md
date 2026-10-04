@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0] - 2026-10-04
+
+### Added
+- **USD-M perpetual futures** (`MARKET=usdm`): fapi/fstream endpoints and Binance's futures sequencing (`pu` must equal the previous event's `u`; the first event must cover the snapshot id), with unit tests for both markets' rules.
+- **Record and replay**: `RECORD_FILE` writes every snapshot and raw depth event (NDJSON); `crypto-orderbook replay FILE` rebuilds the book offline with the same rules. Checked on a live Binance.US recording: the replayed book at update 3354085117 matched what the service served.
+- `DEPTH_LIMIT` for the snapshot size, and the `orderbook_rest_used_weight_1m` and `orderbook_snapshot_rate_limited_total` metrics.
+
+### Fixed
+- **Rate limits**: the snapshot request ignored the HTTP status, so a `429` showed up as "JSON parse failed" and was retried on a short backoff, which on Binance leads to an IP ban (`418`). It now waits for `Retry-After`.
+- **One snapshot per sync, not two**: the snapshot was fetched before the stream delivered anything, so it was usually older than the first event and every start or reconnect needed a second snapshot (250 weight each at limit 5000). It now follows Binance's order: wait for the first event, then snapshot (measured live: 2 snapshots before, 1 after).
+- **Duplicate events no longer force a resync**: on spot, an event already applied (`u <=` the last applied id) is skipped as Binance's procedure says, instead of being treated as a gap.
+- Sequencing rules moved into `orderbook::sync` as pure functions with tests (there were none for the manager before).
+
 ## [0.2.1] - 2026-09-30
 
 - TLS through rustls instead of the system OpenSSL, so one Linux build runs on every distribution (checked live against Binance.US).

@@ -50,6 +50,7 @@ fn make_update(first: u64, last: u64, bids: Vec<(rust_decimal::Decimal, rust_dec
     DepthUpdate {
         first_update_id: first,
         last_update_id:  last,
+        prev_last_update_id: None,
         bids: bids.into_iter().map(|(p, q)| PriceLevel { price: p, quantity: q }).collect(),
         asks: asks.into_iter().map(|(p, q)| PriceLevel { price: p, quantity: q }).collect(),
     }

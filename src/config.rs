@@ -6,6 +6,14 @@ pub struct Config {
     /// Trading pair to track, e.g. "BTCUSDT"
     pub symbol: String,
 
+    /// Which Binance market: spot (default) or USD-M futures (`MARKET=usdm`).
+    pub market: crate::orderbook::sync::Market,
+
+    /// Levels requested in the REST snapshot (`DEPTH_LIMIT`). Binance charges
+    /// request weight by size: on spot 5000 levels cost 250 of the 6000
+    /// weight a minute allows, 1000 levels cost 50.
+    pub depth_limit: u32,
+
     /// Binance WebSocket stream base URL
     pub ws_base: String,
 
@@ -24,13 +32,20 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Self {
         let symbol = std::env::var("SYMBOL").unwrap_or_else(|_| "BTCUSDT".into());
-        let symbol_lower = symbol.to_lowercase();
+        let market = std::env::var("MARKET")
+            .ok()
+            .and_then(|m| crate::orderbook::sync::Market::parse(&m))
+            .unwrap_or(crate::orderbook::sync::Market::Spot);
+        let depth_limit = std::env::var("DEPTH_LIMIT")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(market.max_depth_limit())
+            .clamp(5, market.max_depth_limit());
 
         Self {
-            ws_base: std::env::var("WS_BASE")
-                .unwrap_or_else(|_| format!("wss://stream.binance.com:9443/ws/{symbol_lower}@depth")),
+            ws_base: std::env::var("WS_BASE").unwrap_or_else(|_| market.default_ws_url(&symbol)),
             rest_base: std::env::var("REST_BASE")
-                .unwrap_or_else(|_| "https://api.binance.com".into()),
+                .unwrap_or_else(|_| market.default_rest_base().into()),
             api_port: std::env::var("API_PORT")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -40,6 +55,8 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(10_000),
             symbol,
+            market,
+            depth_limit,
         }
     }
 
@@ -48,9 +65,8 @@ impl Config {
     }
 
     pub fn trade_ws_url(&self) -> url::Url {
-        let symbol_lower = self.symbol.to_lowercase();
         std::env::var("TRADE_WS_BASE")
-            .unwrap_or_else(|_| format!("wss://stream.binance.com:9443/ws/{symbol_lower}@trade"))
+            .unwrap_or_else(|_| self.market.default_trade_ws_url(&self.symbol))
             .parse()
             .expect("invalid trade WS URL")
     }

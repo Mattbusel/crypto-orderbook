@@ -13,6 +13,22 @@ pub static SNAPSHOTS_TOTAL: Lazy<Counter> = Lazy::new(|| {
     register_counter!("orderbook_snapshots_total", "REST snapshots successfully fetched").unwrap()
 });
 
+pub static SNAPSHOT_RATE_LIMITED_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "orderbook_snapshot_rate_limited_total",
+        "Snapshot requests answered 429 (rate limited) or 418 (IP banned) by Binance"
+    )
+    .unwrap()
+});
+
+pub static REST_USED_WEIGHT_1M: Lazy<Gauge> = Lazy::new(|| {
+    register_gauge!(
+        "orderbook_rest_used_weight_1m",
+        "Request weight used in the current minute, from Binance's X-MBX-USED-WEIGHT-1M header"
+    )
+    .unwrap()
+});
+
 pub static SEQUENCE_GAPS_TOTAL: Lazy<Counter> = Lazy::new(|| {
     register_counter!("orderbook_sequence_gaps_total", "Sequence gaps that triggered resync").unwrap()
 });

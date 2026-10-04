@@ -24,6 +24,10 @@ struct RawDepthUpdate {
     #[serde(rename = "u")]
     last_update_id: u64,
 
+    // "pu": the previous event's "u" (USD-M futures only; spot omits it)
+    #[serde(rename = "pu", default)]
+    prev_last_update_id: Option<u64>,
+
     // "b": bid levels to update — [price_str, quantity_str]
     // quantity "0" or "0.00000000" means: remove this price level entirely
     #[serde(rename = "b")]
@@ -68,6 +72,10 @@ pub struct DepthUpdate {
     /// The next event we receive must have first_update_id == this + 1.
     pub last_update_id: u64,
 
+    /// USD-M futures only: the `u` of the previous event in the stream
+    /// (`pu`). Futures sequencing is checked with this instead of `U`.
+    pub prev_last_update_id: Option<u64>,
+
     /// Bid levels to update or remove.
     pub bids: Vec<PriceLevel>,
 
@@ -90,6 +98,7 @@ fn convert(raw: RawDepthUpdate) -> Result<DepthUpdate> {
     Ok(DepthUpdate {
         first_update_id: raw.first_update_id,
         last_update_id: raw.last_update_id,
+        prev_last_update_id: raw.prev_last_update_id,
         bids: parse_levels(raw.bids)?,
         asks: parse_levels(raw.asks)?,
     })
@@ -157,6 +166,13 @@ mod tests {
         // second bid has quantity 0 — Binance's way of saying "delete this level"
         assert!(update.bids[1].is_removal());
         assert!(!update.bids[0].is_removal());
+    }
+
+    #[test]
+    fn reads_pu_from_futures_events_and_none_from_spot() {
+        assert_eq!(parse_depth_update(SAMPLE).unwrap().prev_last_update_id, None);
+        let futures = r#"{"e":"depthUpdate","E":1,"T":1,"s":"BTCUSDT","U":157,"u":160,"pu":149,"b":[],"a":[]}"#;
+        assert_eq!(parse_depth_update(futures).unwrap().prev_last_update_id, Some(149));
     }
 
     #[test]

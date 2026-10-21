@@ -1,5 +1,13 @@
 # crypto-orderbook
 
+<!-- outcome-block -->
+**A live Binance order book that stays correct: snapshot and diff stream stitched by update ID, any gap forces a resync, served over HTTP, WebSocket and Prometheus.**
+
+**Why this over the alternatives:** Homemade books silently drift after one dropped message. This follows Binance's documented sync procedure end to end and rebuilds on every gap.
+
+**Guarantee:** if it doesn't do what this README says, [open an issue](https://github.com/Mattbusel/crypto-orderbook/issues) and I'll fix it.
+<!-- outcome-block -->
+
 A Rust service that keeps a live, correctly sequenced Binance spot order book in memory and serves it over HTTP, WebSocket and Prometheus.
 
 Building a local order book from an exchange feed is mostly about the edge cases: the REST snapshot and the WebSocket diff stream have to be stitched together by update ID, gaps must force a resync, and reconnects must not leave stale levels behind. This project implements Binance's documented snapshot-plus-diff procedure end to end with Tokio and Axum, and exposes the result as a small read-only API.

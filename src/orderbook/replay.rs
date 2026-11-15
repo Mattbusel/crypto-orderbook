@@ -19,8 +19,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::orderbook::book::OrderBook;
-use crate::orderbook::sync::{self, Handshake, Live, Market};
-use crate::ws::binance::{parse_depth_update, DepthUpdate, PriceLevel};
+use crate::orderbook::sync::{BookSync, Market, Outcome};
+use crate::ws::binance::{parse_depth_update, DepthSnapshot, PriceLevel};
 
 /// One line of a recording.
 #[derive(Debug, Serialize, Deserialize)]
@@ -139,25 +139,61 @@ pub struct ReplayReport {
     pub last_update_id: Option<u64>,
 }
 
-#[derive(PartialEq)]
-enum State {
-    /// No snapshot yet, or the book went out of sequence.
-    Unsynced,
-    /// Snapshot applied, waiting for the first event that connects.
-    Handshake { snapshot_id: u64 },
-    /// Following the stream.
-    Live { prev: u64 },
+impl Record {
+    /// The snapshot as a [`DepthSnapshot`] and its market, if this is a
+    /// snapshot record. Levels that do not parse are dropped.
+    pub fn to_snapshot(&self) -> Option<(Market, DepthSnapshot)> {
+        let Record::Snapshot {
+            market,
+            last_update_id,
+            bids,
+            asks,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        let parse = |levels: &[[String; 2]]| -> Vec<PriceLevel> {
+            levels
+                .iter()
+                .filter_map(|[p, q]| {
+                    Some(PriceLevel {
+                        price: p.parse().ok()?,
+                        quantity: q.parse().ok()?,
+                    })
+                })
+                .collect()
+        };
+        Some((
+            Market::parse(market).unwrap_or(Market::Spot),
+            DepthSnapshot {
+                last_update_id: *last_update_id,
+                bids: parse(bids),
+                asks: parse(asks),
+            },
+        ))
+    }
 }
 
 /// Rebuild the book from a recording made by [`Recorder`].
 pub fn replay(path: &Path) -> std::io::Result<ReplayReport> {
     let file = std::fs::File::open(path)?;
+    replay_reader(std::io::BufReader::new(file))
+}
+
+/// Rebuild the book from a recording read from `reader`, running it through
+/// [`BookSync`] exactly as the live service does: depth lines before a
+/// snapshot are buffered, the snapshot line replays the buffer onto itself,
+/// and every later event is checked for continuity.
+pub fn replay_reader<R: BufRead>(reader: R) -> std::io::Result<ReplayReport> {
     let mut report = ReplayReport::default();
     let mut book = OrderBook::new();
-    let mut market = Market::Spot;
-    let mut state = State::Unsynced;
+    let mut sync: Option<BookSync> = None;
+    // Depth lines before the first snapshot line: the market is not known
+    // until then, so they are held and handed to BookSync with it.
+    let mut early = Vec::new();
 
-    for line in std::io::BufReader::new(file).lines() {
+    for line in reader.lines() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
@@ -169,86 +205,45 @@ pub fn replay(path: &Path) -> std::io::Result<ReplayReport> {
                 continue;
             }
         };
-        match record {
-            Record::Snapshot {
-                market: m,
-                last_update_id,
-                bids,
-                asks,
-                ..
-            } => {
+        match &record {
+            Record::Snapshot { .. } => {
+                let Some((market, snapshot)) = record.to_snapshot() else {
+                    continue;
+                };
                 report.snapshots += 1;
-                market = Market::parse(&m).unwrap_or(Market::Spot);
-                let parse = |levels: Vec<[String; 2]>| -> Vec<PriceLevel> {
-                    levels
-                        .into_iter()
-                        .filter_map(|[p, q]| {
-                            Some(PriceLevel {
-                                price: p.parse().ok()?,
-                                quantity: q.parse().ok()?,
-                            })
-                        })
-                        .collect()
-                };
-                book.clear();
-                book.apply(&DepthUpdate {
-                    first_update_id: last_update_id,
-                    last_update_id,
-                    prev_last_update_id: None,
-                    bids: parse(bids),
-                    asks: parse(asks),
-                });
-                state = State::Handshake {
-                    snapshot_id: last_update_id,
-                };
+                let s = sync.get_or_insert_with(|| BookSync::new(market));
+                for update in early.drain(..) {
+                    s.on_event(&mut book, update);
+                }
+                let done = s.on_snapshot(&mut book, snapshot);
+                report.applied += done.applied;
+                report.skipped += done.skipped;
+                if done.resync.is_some() {
+                    report.gaps += 1;
+                }
             }
             Record::Depth { raw, .. } => {
                 report.events += 1;
-                let Ok(update) = parse_depth_update(&raw) else {
+                let Ok(update) = parse_depth_update(raw) else {
                     report.bad_lines += 1;
                     continue;
                 };
-                match state {
-                    State::Unsynced => report.skipped += 1,
-                    State::Handshake { snapshot_id } => {
-                        match sync::handshake(market, snapshot_id, &update) {
-                            Handshake::Stale => report.skipped += 1,
-                            Handshake::Gap => {
-                                report.gaps += 1;
-                                book.clear();
-                                state = State::Unsynced;
-                            }
-                            Handshake::Apply => {
-                                book.apply(&update);
-                                report.applied += 1;
-                                state = State::Live {
-                                    prev: update.last_update_id,
-                                };
-                            }
-                        }
-                    }
-                    State::Live { prev } => match sync::live(market, prev, &update) {
-                        Live::Apply => {
-                            book.apply(&update);
-                            report.applied += 1;
-                            state = State::Live {
-                                prev: update.last_update_id,
-                            };
-                        }
-                        Live::Ignore => report.skipped += 1,
-                        Live::Gap { .. } => {
-                            report.gaps += 1;
-                            book.clear();
-                            state = State::Unsynced;
-                        }
-                    },
+                let Some(s) = sync.as_mut() else {
+                    early.push(update);
+                    continue;
+                };
+                match s.on_event(&mut book, update) {
+                    Outcome::Applied => report.applied += 1,
+                    Outcome::Skipped => report.skipped += 1,
+                    Outcome::Buffered => {}
+                    Outcome::Resync(_) => report.gaps += 1,
                 }
             }
         }
     }
 
-    if let State::Live { prev } = state {
-        report.last_update_id = Some(prev);
+    if sync.as_ref().is_some_and(BookSync::is_live) {
+        report.last_update_id = Some(book.last_update_id);
         report.best_bid = book.best_bid().map(|l| (l.price, l.quantity));
         report.best_ask = book.best_ask().map(|l| (l.price, l.quantity));
         report.bid_depth = book.bid_depth();

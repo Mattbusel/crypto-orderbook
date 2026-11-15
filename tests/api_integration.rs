@@ -204,6 +204,39 @@ async fn metrics_endpoint_returns_prometheus_text() {
 }
 
 #[tokio::test]
+async fn standalone_metrics_router_lists_the_sync_health_metrics() {
+    // What a program embedding the library mounts instead of the full API.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, crypto_orderbook::metrics::router()).await.unwrap();
+    });
+
+    let resp = reqwest::get(format!("http://{addr}/metrics")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()["content-type"].to_str().unwrap(),
+        crypto_orderbook::metrics::CONTENT_TYPE
+    );
+    let body = resp.text().await.unwrap();
+    for name in [
+        "orderbook_synced",
+        "orderbook_last_update_id",
+        "orderbook_buffered_events",
+        "orderbook_resyncs_total",
+        "orderbook_sequence_gaps_total",
+        "orderbook_events_skipped_total",
+        "orderbook_snapshot_refetches_total",
+        "orderbook_snapshot_rate_limited_total",
+        "orderbook_rest_used_weight_1m",
+    ] {
+        assert!(body.contains(&format!("# TYPE {name} ")), "{name} missing from /metrics");
+    }
+    let other = reqwest::get(format!("http://{addr}/book/best")).await.unwrap();
+    assert_eq!(other.status(), 404, "the metrics router serves only /metrics");
+}
+
+#[tokio::test]
 async fn imbalance_detects_buy_pressure() {
     let book = Arc::new(RwLock::new(OrderBook::new()));
     // Heavy bid side: 10 BTC bid, 1 BTC ask -> imbalance = (10-1)/(10+1) = 0.818...

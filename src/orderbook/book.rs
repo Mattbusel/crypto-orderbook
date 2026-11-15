@@ -23,7 +23,14 @@ pub struct OrderBook {
     pub last_update_id: u64,
 }
 
+impl Default for OrderBook {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OrderBook {
+    /// An empty book.
     pub fn new() -> Self {
         Self {
             bids: BTreeMap::new(),

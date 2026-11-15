@@ -1,10 +1,4 @@
-mod api;
-mod config;
-mod error;
-mod metrics;
-mod orderbook;
-mod trades;
-mod ws;
+// The service binary: a thin consumer of the crypto_orderbook library.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
@@ -13,11 +7,12 @@ use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 use tracing::info;
 
-use api::routes::{router, AppState};
-use config::Config;
-use orderbook::{book::OrderBook, manager::Manager};
-use trades::{manager::TradeManager, vwap::VwapWindow};
-use ws::client;
+use crypto_orderbook::api::routes::{router, AppState};
+use crypto_orderbook::config::Config;
+use crypto_orderbook::orderbook::{self, book::OrderBook, manager::Manager};
+use crypto_orderbook::trades::{manager::TradeManager, vwap::VwapWindow};
+use crypto_orderbook::ws::client;
+use crypto_orderbook::metrics;
 
 // How many messages the broadcast channel buffers per subscriber.
 // If a slow client falls more than this many updates behind, it starts
@@ -124,7 +119,8 @@ async fn main() {
     tokio::spawn(
         {
             let manager = Manager::new(depth_rx, Arc::clone(&book), cfg.symbol.clone(), push_tx.clone())
-                .with_market(cfg.market, cfg.rest_base.clone(), cfg.depth_limit);
+                .with_market(cfg.market, cfg.rest_base.clone(), cfg.depth_limit)
+                .with_max_buffer(cfg.channel_buffer);
             match std::env::var_os("RECORD_FILE") {
                 Some(path) => match orderbook::replay::Recorder::open(std::path::Path::new(&path)) {
                     Ok(rec) => {

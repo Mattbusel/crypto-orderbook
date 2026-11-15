@@ -1,17 +1,20 @@
+//! The networked driver: reads WebSocket frames from a channel, fetches REST
+//! snapshots when [`BookSync`] asks for one, and publishes the book to the
+//! HTTP API, WebSocket subscribers and Prometheus. All sequencing decisions
+//! are made by [`BookSync`]; this module only does I/O around it.
+
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use rust_decimal::Decimal;
-use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use crate::api::ws_push::{serialize_push, PushSender};
-use crate::error::{AppError, Result};
+use crate::error::AppError;
 use crate::metrics;
 use crate::orderbook::book::OrderBook;
-use crate::orderbook::sync::{self, Handshake, Live, Market};
-use crate::ws::binance::{parse_depth_update, DepthUpdate, PriceLevel};
+use crate::orderbook::sync::{BookSync, Market, Outcome, ResyncReason, SyncState};
+use crate::ws::binance::{parse_depth_snapshot, parse_depth_update, DepthSnapshot, DepthUpdate};
 use crate::ws::WsEvent;
 
 // ── Circuit breaker ────────────────────────────────────────────────────────────
@@ -22,6 +25,10 @@ use crate::ws::WsEvent;
 
 const OPEN_THRESHOLD: u32     = 5;
 const COOLDOWN: Duration       = Duration::from_secs(30);
+
+// How many times to refetch a snapshot that is older than the first buffered
+// event before giving up on this cycle and letting BookSync resync.
+const MAX_REFETCHES: u32 = 5;
 
 #[derive(Debug)]
 enum BreakerState {
@@ -57,11 +64,8 @@ impl CircuitBreaker {
     }
 
     fn record_success(&mut self) {
-        match self.state {
-            BreakerState::HalfOpen => {
-                info!("circuit breaker closed: probe succeeded");
-            }
-            _ => {}
+        if let BreakerState::HalfOpen = self.state {
+            info!("circuit breaker closed: probe succeeded");
         }
         self.state = BreakerState::Closed { consecutive_failures: 0 };
     }
@@ -86,27 +90,12 @@ impl CircuitBreaker {
     }
 }
 
-// ── Snapshot types ─────────────────────────────────────────────────────────────
-
-// The shape Binance's REST depth endpoint returns.
-// Private to this module — nothing else needs to know about the REST format.
-#[derive(Deserialize)]
-struct RawSnapshot {
-    #[serde(rename = "lastUpdateId")]
-    last_update_id: u64,
-    bids: Vec<[String; 2]>,
-    asks: Vec<[String; 2]>,
-}
-
-// Our internal representation after parsing strings into Decimals.
-struct Snapshot {
-    last_update_id: u64,
-    bids: Vec<PriceLevel>,
-    asks: Vec<PriceLevel>,
-}
-
 // ── Manager ────────────────────────────────────────────────────────────────────
 
+/// Keeps a shared [`OrderBook`] in sync with Binance.
+///
+/// Feed it the depth stream through `rx` (see [`crate::ws::client::spawn`])
+/// and call [`run`](Self::run). Readers lock `book` to query it.
 pub struct Manager {
     rx:       mpsc::Receiver<WsEvent>,
     book:     Arc<RwLock<OrderBook>>,
@@ -117,14 +106,20 @@ pub struct Manager {
     market:   Market,
     rest_base: String,
     depth_limit: u32,
-    // Events taken off the channel before the snapshot (the first depth
-    // event of a cycle), replayed to the handshake in order.
-    pending:  std::collections::VecDeque<WsEvent>,
+    max_buffer: usize,
     // RECORD_FILE: every snapshot and raw depth event, for replay.
     recorder: Option<crate::orderbook::replay::Recorder>,
 }
 
+/// What the stream delivered next.
+enum Next {
+    Update(DepthUpdate),
+    Reconnected,
+}
+
 impl Manager {
+    /// A manager for `symbol` on spot with the default REST base; adjust
+    /// with [`with_market`](Self::with_market).
     pub fn new(
         rx:      mpsc::Receiver<WsEvent>,
         book:    Arc<RwLock<OrderBook>>,
@@ -141,7 +136,7 @@ impl Manager {
             market: Market::Spot,
             rest_base: Market::Spot.default_rest_base().to_string(),
             depth_limit: Market::Spot.max_depth_limit(),
-            pending: std::collections::VecDeque::new(),
+            max_buffer: BookSync::DEFAULT_MAX_BUFFER,
             recorder: None,
         }
     }
@@ -153,41 +148,6 @@ impl Manager {
         self
     }
 
-    /// The next event: anything held back first, then the channel.
-    async fn next_event(&mut self) -> Option<WsEvent> {
-        if let Some(event) = self.pending.pop_front() {
-            return Some(event);
-        }
-        let event = self.rx.recv().await?;
-        if let (Some(rec), WsEvent::Message(raw)) = (self.recorder.as_mut(), &event) {
-            if let Err(e) = rec.depth(raw) {
-                warn!(error = %e, "could not write to RECORD_FILE; recording stopped");
-                self.recorder = None;
-            }
-        }
-        Some(event)
-    }
-
-    /// Wait until the depth stream delivers an event, hold it for the
-    /// handshake, and return its first update id (`U`). Binance's procedure
-    /// starts here: a snapshot fetched before the stream is flowing can be
-    /// older than the stream's first event, which forces a second snapshot.
-    /// Returns `None` if the channel closed.
-    async fn wait_for_stream(&mut self) -> Option<u64> {
-        loop {
-            let event = self.next_event().await?;
-            if let WsEvent::Message(raw) = &event {
-                if let Ok(update) = parse_depth_update(raw) {
-                    let first = update.first_update_id;
-                    self.pending.push_front(event);
-                    return Some(first);
-                }
-            }
-            // Reconnect signals and unparsable frames before the first event
-            // carry nothing to keep.
-        }
-    }
-
     /// Follow `market` (spot or USD-M futures), fetching snapshots of
     /// `depth_limit` levels from `rest_base`.
     pub fn with_market(mut self, market: Market, rest_base: String, depth_limit: u32) -> Self {
@@ -197,89 +157,200 @@ impl Manager {
         self
     }
 
-    /// Run the manager indefinitely.
-    ///
-    /// The outer loop is the resync loop. Every time we need to start over —
-    /// because of a reconnect, a sequence gap, or a failed handshake —
-    /// we return to the top and begin the snapshot fetch again.
-    pub async fn run(mut self) {
+    /// Hold at most `max` events while waiting for a snapshot.
+    pub fn with_max_buffer(mut self, max: usize) -> Self {
+        self.max_buffer = max.max(1);
+        self
+    }
+
+    /// The next parsed depth event or reconnect signal; `None` once the
+    /// channel is closed. Every raw frame is recorded as it arrives.
+    async fn next(&mut self) -> Option<Next> {
         loop {
-            info!(symbol = %self.symbol, "starting sync cycle");
-
-            // Phase 0: wait for the stream to deliver its first event, so the
-            // snapshot is never older than the stream (Binance's procedure).
-            let Some(first_u) = self.wait_for_stream().await else {
-                info!("event channel closed, shutting down manager");
-                return;
-            };
-
-            // Phase 1: Fetch a fresh snapshot from Binance's REST API.
-            // While this is happening, the WebSocket client is still running
-            // and events are queuing up in the mpsc channel's internal buffer.
-            // If the snapshot is older than the first buffered event, fetch
-            // again rather than restart the whole cycle.
-            let mut snapshot = self.fetch_snapshot_with_retry().await;
-            let mut refetches = 0;
-            while snapshot.last_update_id < first_u && refetches < 5 {
-                refetches += 1;
-                tokio::time::sleep(Duration::from_millis(250)).await;
-                snapshot = self.fetch_snapshot_with_retry().await;
-            }
-
-            // Apply the snapshot to the book. This gives us a known baseline
-            // to start applying incremental updates on top of.
-            {
-                let mut book = self.book.write().expect("book lock poisoned");
-                book.clear();
-                apply_snapshot_to_book(&mut book, &snapshot);
-                if let Some(rec) = self.recorder.as_mut() {
-                    if let Err(e) = rec.snapshot(self.market, snapshot.last_update_id, &snapshot.bids, &snapshot.asks) {
-                        warn!(error = %e, "could not write to RECORD_FILE; recording stopped");
-                        self.recorder = None;
+            let event = self.rx.recv().await?;
+            match event {
+                WsEvent::Reconnected => {
+                    metrics::WS_RECONNECTS_TOTAL.inc();
+                    return Some(Next::Reconnected);
+                }
+                WsEvent::Message(raw) => {
+                    if let Some(rec) = self.recorder.as_mut() {
+                        if let Err(e) = rec.depth(&raw) {
+                            warn!(error = %e, "could not write to RECORD_FILE; recording stopped");
+                            self.recorder = None;
+                        }
+                    }
+                    match parse_depth_update(&raw) {
+                        Ok(update) => {
+                            metrics::WS_EVENTS_TOTAL.inc();
+                            return Some(Next::Update(update));
+                        }
+                        Err(e) => {
+                            metrics::PARSE_ERRORS_TOTAL.inc();
+                            warn!(error = %e, "unparsable depth frame, skipping");
+                        }
                     }
                 }
-                info!(last_update_id = snapshot.last_update_id, "snapshot applied");
             }
-
-            // Phase 2: Find the first event that connects to the snapshot.
-            // Events that arrived before or overlapping the snapshot get discarded.
-            let first_last_id = match self.find_first_valid_event(snapshot.last_update_id).await {
-                Some(id) => id,
-                None => {
-                    // Reconnected during handshake — start the whole cycle over.
-                    self.book.write().expect("book lock poisoned").clear();
-                    continue;
-                }
-            };
-
-            info!(first_last_id, "sync handshake complete, entering live mode");
-
-            // Phase 3: Live mode. Apply every event, validating sequence continuity.
-            match self.run_live(first_last_id).await {
-                LiveResult::SequenceGap { expected, got } => {
-                    metrics::SEQUENCE_GAPS_TOTAL.inc();
-                    error!(expected, got, "sequence gap detected, resyncing");
-                }
-                LiveResult::Reconnected => {
-                    info!("reconnect signal received, resyncing");
-                }
-                LiveResult::ChannelClosed => {
-                    info!("event channel closed, shutting down manager");
-                    return;
-                }
-            }
-
-            // Any exit from live mode means the book is now unreliable.
-            // Clear it so the API doesn't serve stale data while we resync.
-            self.book.write().expect("book lock poisoned").clear();
         }
     }
 
-    // ── Phase 1: Snapshot fetch ──────────────────────────────────────────────
+    /// Run the manager until the event channel closes.
+    ///
+    /// Binance's procedure, driven by [`BookSync`]: buffer the stream, fetch
+    /// a snapshot once it has delivered an event (refetching while the
+    /// snapshot is older than that event), replay the buffer onto it, then
+    /// follow the stream. A gap or reconnect clears the book and starts over.
+    pub async fn run(mut self) {
+        let mut sync = BookSync::new(self.market).with_max_buffer(self.max_buffer);
+        loop {
+            // Phase 0: wait until the stream has delivered an event, so the
+            // snapshot is never older than the stream.
+            while !sync.needs_snapshot() {
+                match self.next().await {
+                    None => {
+                        info!("event channel closed, shutting down manager");
+                        return;
+                    }
+                    Some(Next::Reconnected) => self.reset(&mut sync),
+                    Some(Next::Update(update)) => {
+                        let mut book = self.book.write().expect("book lock poisoned");
+                        sync.on_event(&mut book, update);
+                    }
+                }
+            }
+            info!(symbol = %self.symbol, first_update_id = sync.first_buffered_update_id(), "starting sync cycle");
+
+            // Phase 1: snapshot. The WebSocket keeps running meanwhile and its
+            // events queue in the channel; BookSync sees them after the snapshot.
+            let mut snapshot = self.fetch_snapshot_with_retry().await;
+            let mut refetches = 0;
+            while sync.snapshot_is_too_old(snapshot.last_update_id) && refetches < MAX_REFETCHES {
+                refetches += 1;
+                metrics::SNAPSHOT_REFETCHES_TOTAL.inc();
+                warn!(
+                    snapshot_id = snapshot.last_update_id,
+                    first_update_id = sync.first_buffered_update_id(),
+                    "snapshot older than the stream, fetching again"
+                );
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                snapshot = self.fetch_snapshot_with_retry().await;
+            }
+            if let Some(rec) = self.recorder.as_mut() {
+                if let Err(e) = rec.snapshot(self.market, snapshot.last_update_id, &snapshot.bids, &snapshot.asks) {
+                    warn!(error = %e, "could not write to RECORD_FILE; recording stopped");
+                    self.recorder = None;
+                }
+            }
+
+            // Phase 2: replay the buffer onto the snapshot.
+            let snapshot_id = snapshot.last_update_id;
+            let done = {
+                let mut book = self.book.write().expect("book lock poisoned");
+                sync.on_snapshot(&mut book, snapshot)
+            };
+            info!(snapshot_id, applied = done.applied, skipped = done.skipped, "snapshot applied");
+            metrics::EVENTS_SKIPPED_TOTAL.inc_by(done.skipped as f64);
+            metrics::UPDATES_APPLIED_TOTAL.inc_by(done.applied as f64);
+            if let Some(reason) = done.resync {
+                self.on_resync(reason);
+                self.publish_state(&sync);
+                continue;
+            }
+            self.publish_state(&sync);
+            if sync.is_live() {
+                info!("sync handshake complete, entering live mode");
+            }
+
+            // Phase 3: follow the stream until something breaks.
+            loop {
+                let update = match self.next().await {
+                    None => {
+                        info!("event channel closed, shutting down manager");
+                        return;
+                    }
+                    Some(Next::Reconnected) => {
+                        info!("reconnect signal received, resyncing");
+                        self.reset(&mut sync);
+                        break;
+                    }
+                    Some(Next::Update(update)) => update,
+                };
+                let was_live = sync.is_live();
+                let mut book = self.book.write().expect("book lock poisoned");
+                match sync.on_event(&mut book, update) {
+                    Outcome::Applied => {
+                        metrics::UPDATES_APPLIED_TOTAL.inc();
+                        publish_book(&book);
+                        if let Some(payload) = serialize_push(
+                            &self.symbol,
+                            book.best_bid(),
+                            book.best_ask(),
+                            book.spread(),
+                            book.micro_price(),
+                            book.last_update_id,
+                        ) {
+                            // send() fails only when nobody is subscribed.
+                            let _ = self.push_tx.send(payload);
+                        }
+                        drop(book);
+                        if !was_live {
+                            info!("sync handshake complete, entering live mode");
+                            self.publish_state(&sync);
+                        }
+                    }
+                    Outcome::Skipped => metrics::EVENTS_SKIPPED_TOTAL.inc(),
+                    Outcome::Buffered => {}
+                    Outcome::Resync(reason) => {
+                        drop(book);
+                        self.on_resync(reason);
+                        self.publish_state(&sync);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    fn reset(&self, sync: &mut BookSync) {
+        let mut book = self.book.write().expect("book lock poisoned");
+        sync.reset(&mut book);
+        drop(book);
+        self.publish_state(sync);
+    }
+
+    fn on_resync(&self, reason: ResyncReason) {
+        metrics::RESYNCS_TOTAL.inc();
+        match reason {
+            ResyncReason::Gap { expected, got } => {
+                metrics::SEQUENCE_GAPS_TOTAL.inc();
+                error!(expected, got, "sequence gap detected, resyncing");
+            }
+            ResyncReason::SnapshotTooOld { snapshot_id, first_update_id } => {
+                error!(snapshot_id, first_update_id, "snapshot does not connect to the stream, resyncing");
+            }
+        }
+    }
+
+    fn publish_state(&self, sync: &BookSync) {
+        let (synced, last) = match sync.state() {
+            SyncState::Live { last_update_id } => (1.0, last_update_id as f64),
+            _ => (0.0, 0.0),
+        };
+        metrics::SYNCED.set(synced);
+        metrics::LAST_UPDATE_ID.set(last);
+        metrics::BUFFERED_EVENTS.set(sync.buffered() as f64);
+        if !sync.is_live() {
+            metrics::BID_DEPTH.set(0.0);
+            metrics::ASK_DEPTH.set(0.0);
+        }
+    }
+
+    // ── Snapshot fetch ───────────────────────────────────────────────────────
 
     /// Fetch a depth snapshot, retrying with backoff until one arrives.
     /// The circuit breaker stops outbound requests during Binance REST outages.
-    async fn fetch_snapshot_with_retry(&mut self) -> Snapshot {
+    async fn fetch_snapshot_with_retry(&mut self) -> DepthSnapshot {
         let mut attempt = 0u32;
         loop {
             if !self.breaker.allow() {
@@ -305,6 +376,7 @@ impl Manager {
                 }
                 Err(SnapshotError::Other(e)) => {
                     self.breaker.record_failure();
+                    metrics::SNAPSHOT_FAILURES_TOTAL.inc();
                     let wait_secs = 2u64.saturating_pow(attempt).min(30);
                     error!(error = %e, wait_secs, "snapshot fetch failed, retrying");
                     tokio::time::sleep(Duration::from_secs(wait_secs)).await;
@@ -314,7 +386,7 @@ impl Manager {
         }
     }
 
-    async fn fetch_snapshot(&self) -> std::result::Result<Snapshot, SnapshotError> {
+    async fn fetch_snapshot(&self) -> std::result::Result<DepthSnapshot, SnapshotError> {
         // REST_BASE lets the snapshot come from another Binance deployment
         // (e.g. https://api.binance.us where binance.com is geo-blocked).
         let url = format!(
@@ -354,143 +426,23 @@ impl Manager {
                 body.chars().take(200).collect::<String>()
             ))));
         }
-        let raw: RawSnapshot = resp
-            .json()
+        let body = resp
+            .text()
             .await
-            .map_err(|e| SnapshotError::Other(AppError::InvalidField(format!("snapshot JSON parse failed: {e}"))))?;
-
-        let bids = parse_snapshot_levels(raw.bids).map_err(SnapshotError::Other)?;
-        let asks = parse_snapshot_levels(raw.asks).map_err(SnapshotError::Other)?;
-
-        Ok(Snapshot {
-            last_update_id: raw.last_update_id,
-            bids,
-            asks,
-        })
+            .map_err(|e| SnapshotError::Other(AppError::InvalidField(format!("snapshot body read failed: {e}"))))?;
+        parse_depth_snapshot(&body).map_err(SnapshotError::Other)
     }
+}
 
-    // ── Phase 2: Handshake ───────────────────────────────────────────────────
-
-    /// Scan incoming events until we find the first one that cleanly connects
-    /// to the snapshot we just applied.
-    ///
-    /// Returns the last_update_id of the first valid event (used as the
-    /// starting point for sequence continuity checking in live mode),
-    /// or None if we received a Reconnected signal and need to start over.
-    async fn find_first_valid_event(&mut self, snapshot_last_id: u64) -> Option<u64> {
-        loop {
-            let event = self.next_event().await?; // None = channel closed = shut down
-
-            match event {
-                WsEvent::Reconnected => {
-                    // The WebSocket dropped while we were doing the handshake.
-                    // The events buffered so far are now from a dead stream.
-                    return None;
-                }
-                WsEvent::Message(raw) => {
-                    let update = match parse_depth_update(&raw) {
-                        Ok(u) => u,
-                        Err(e) => {
-                            warn!(error = %e, "parse error during handshake, skipping");
-                            continue;
-                        }
-                    };
-
-                    match sync::handshake(self.market, snapshot_last_id, &update) {
-                        // Already contained in the snapshot.
-                        Handshake::Stale => continue,
-                        // Updates between the snapshot and this event were
-                        // missed: fetch a new snapshot.
-                        Handshake::Gap => {
-                            error!(
-                                snapshot_last_id,
-                                event_first = update.first_update_id,
-                                "sync gap: first event does not connect to snapshot"
-                            );
-                            return None;
-                        }
-                        Handshake::Apply => {}
-                    }
-
-                    // This event either overlaps or directly follows the snapshot.
-                    // Binance's spec says this is the correct first event to apply.
-                    self.book
-                        .write()
-                        .expect("book lock poisoned")
-                        .apply(&update);
-
-                    return Some(update.last_update_id);
-                }
-            }
-        }
-    }
-
-    // ── Phase 3: Live mode ───────────────────────────────────────────────────
-
-    /// Process events indefinitely, checking that each one's sequence number
-    /// directly follows the previous one. Returns when something breaks.
-    async fn run_live(&mut self, first_last_id: u64) -> LiveResult {
-        let mut prev_last_id = first_last_id;
-
-        loop {
-            let event = match self.next_event().await {
-                Some(e) => e,
-                None => return LiveResult::ChannelClosed,
-            };
-
-            match event {
-                WsEvent::Reconnected => return LiveResult::Reconnected,
-
-                WsEvent::Message(raw) => {
-                    let update = match parse_depth_update(&raw) {
-                        Ok(u) => u,
-                        Err(e) => {
-                            warn!(error = %e, "parse error in live mode, skipping frame");
-                            continue;
-                        }
-                    };
-
-                    // Sequence continuity (spot: U follows the previous u;
-                    // futures: pu equals the previous u). A duplicate or late
-                    // event is skipped instead of forcing a resync.
-                    match sync::live(self.market, prev_last_id, &update) {
-                        Live::Apply => {}
-                        Live::Ignore => continue,
-                        Live::Gap { expected, got } => {
-                            return LiveResult::SequenceGap { expected, got };
-                        }
-                    }
-
-                    {
-                        let mut book = self.book.write().expect("book lock poisoned");
-                        book.apply(&update);
-                        metrics::UPDATES_APPLIED_TOTAL.inc();
-                        metrics::WS_EVENTS_TOTAL.inc();
-                        metrics::BID_DEPTH.set(book.bid_depth() as f64);
-                        metrics::ASK_DEPTH.set(book.ask_depth() as f64);
-                        if let Some(s) = book.spread() {
-                            use rust_decimal::prelude::ToPrimitive;
-                            if let Some(f) = s.to_f64() {
-                                metrics::SPREAD.set(f);
-                            }
-                        }
-                        // Publish to WebSocket subscribers. send() fails only when
-                        // there are no subscribers — that's fine, we discard the error.
-                        if let Some(payload) = serialize_push(
-                            &self.symbol,
-                            book.best_bid(),
-                            book.best_ask(),
-                            book.spread(),
-                            book.micro_price(),
-                            book.last_update_id,
-                        ) {
-                            let _ = self.push_tx.send(payload);
-                        }
-                    }
-
-                    prev_last_id = update.last_update_id;
-                }
-            }
+/// Refresh the book gauges after an update.
+fn publish_book(book: &OrderBook) {
+    metrics::BID_DEPTH.set(book.bid_depth() as f64);
+    metrics::ASK_DEPTH.set(book.ask_depth() as f64);
+    metrics::LAST_UPDATE_ID.set(book.last_update_id as f64);
+    if let Some(s) = book.spread() {
+        use rust_decimal::prelude::ToPrimitive;
+        if let Some(f) = s.to_f64() {
+            metrics::SPREAD.set(f);
         }
     }
 }
@@ -509,44 +461,4 @@ impl std::fmt::Display for SnapshotError {
             Self::Other(e) => write!(f, "{e}"),
         }
     }
-}
-
-// ── Result type for live mode ──────────────────────────────────────────────────
-
-// Named enum so the caller knows exactly why live mode ended.
-// Each variant maps to a different log message and the same recovery action
-// (start the sync cycle over), but naming them makes the code self-documenting.
-enum LiveResult {
-    SequenceGap { expected: u64, got: u64 },
-    Reconnected,
-    ChannelClosed,
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-fn apply_snapshot_to_book(book: &mut OrderBook, snapshot: &Snapshot) {
-    // We apply the snapshot as if it were a single update that sets all levels.
-    // The book was just cleared, so there are no stale entries to worry about.
-    let update = DepthUpdate {
-        first_update_id: snapshot.last_update_id,
-        last_update_id: snapshot.last_update_id,
-        prev_last_update_id: None,
-        bids: snapshot.bids.clone(),
-        asks: snapshot.asks.clone(),
-    };
-    book.apply(&update);
-}
-
-fn parse_snapshot_levels(raw: Vec<[String; 2]>) -> Result<Vec<PriceLevel>> {
-    raw.into_iter()
-        .map(|entry| {
-            let price = entry[0]
-                .parse::<Decimal>()
-                .map_err(|e| AppError::InvalidField(format!("bad snapshot price '{}': {e}", entry[0])))?;
-            let quantity = entry[1]
-                .parse::<Decimal>()
-                .map_err(|e| AppError::InvalidField(format!("bad snapshot qty '{}': {e}", entry[1])))?;
-            Ok(PriceLevel { price, quantity })
-        })
-        .collect()
 }

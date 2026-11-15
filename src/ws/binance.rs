@@ -94,6 +94,38 @@ pub fn parse_depth_update(raw: &str) -> Result<DepthUpdate> {
     convert(raw)
 }
 
+// The REST depth snapshot (`GET /api/v3/depth`, `GET /fapi/v1/depth`).
+// Futures add "E" and "T"; unknown fields are ignored.
+#[derive(Debug, Deserialize)]
+struct RawSnapshot {
+    #[serde(rename = "lastUpdateId")]
+    last_update_id: u64,
+    bids: Vec<[String; 2]>,
+    asks: Vec<[String; 2]>,
+}
+
+/// A REST depth snapshot: the full book (up to the requested limit) as of
+/// `last_update_id`.
+#[derive(Debug, Clone)]
+pub struct DepthSnapshot {
+    /// The snapshot's `lastUpdateId`.
+    pub last_update_id: u64,
+    /// Bid levels, best first as Binance sends them.
+    pub bids: Vec<PriceLevel>,
+    /// Ask levels, best first.
+    pub asks: Vec<PriceLevel>,
+}
+
+/// Parse the JSON body of a REST depth snapshot (spot or USD-M futures).
+pub fn parse_depth_snapshot(raw: &str) -> Result<DepthSnapshot> {
+    let raw: RawSnapshot = serde_json::from_str(raw)?;
+    Ok(DepthSnapshot {
+        last_update_id: raw.last_update_id,
+        bids: parse_levels(raw.bids)?,
+        asks: parse_levels(raw.asks)?,
+    })
+}
+
 fn convert(raw: RawDepthUpdate) -> Result<DepthUpdate> {
     Ok(DepthUpdate {
         first_update_id: raw.first_update_id,
@@ -173,6 +205,18 @@ mod tests {
         assert_eq!(parse_depth_update(SAMPLE).unwrap().prev_last_update_id, None);
         let futures = r#"{"e":"depthUpdate","E":1,"T":1,"s":"BTCUSDT","U":157,"u":160,"pu":149,"b":[],"a":[]}"#;
         assert_eq!(parse_depth_update(futures).unwrap().prev_last_update_id, Some(149));
+    }
+
+    #[test]
+    fn parses_spot_and_futures_snapshots() {
+        let spot = r#"{"lastUpdateId":3430203552,"bids":[["63832.12000000","0.00039000"]],"asks":[["63832.77000000","0.00039000"]]}"#;
+        let s = parse_depth_snapshot(spot).unwrap();
+        assert_eq!(s.last_update_id, 3430203552);
+        assert_eq!(s.bids[0].price.to_string(), "63832.12000000");
+        assert_eq!(s.asks.len(), 1);
+        let futures = r#"{"lastUpdateId":1027024,"E":1589436922972,"T":1589436922959,"bids":[["4.00000000","431.00000000"]],"asks":[["4.00000200","12.00000000"]]}"#;
+        assert_eq!(parse_depth_snapshot(futures).unwrap().last_update_id, 1027024);
+        assert!(parse_depth_snapshot(r#"{"lastUpdateId":1,"bids":[["x","1"]],"asks":[]}"#).is_err());
     }
 
     #[test]

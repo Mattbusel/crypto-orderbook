@@ -1,15 +1,15 @@
 [package]
 name = "crypto-orderbook"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.88"
-description = "Live, correctly sequenced Binance spot or USD-M futures order book over HTTP, WebSocket and Prometheus, with recording and offline replay"
+description = "Correctly sequenced Binance spot and USD-M futures order book: a sans-IO sync library plus a service over HTTP, WebSocket and Prometheus, with recording and offline replay"
 license = "MIT"
 repository = "https://gitlab.com/mattbusel/crypto-orderbook"
 homepage = "https://gitlab.com/mattbusel/crypto-orderbook"
 readme = "README.md"
 keywords = ["orderbook", "binance", "crypto", "websocket", "market-data"]
-categories = ["command-line-utilities", "finance"]
+categories = ["command-line-utilities", "finance", "network-programming"]
 exclude = ["docs/", "Dockerfile"]
 
 [dependencies]
@@ -62,3 +62,4 @@ codegen-units = 1
 
 [dev-dependencies]
 tempfile = "3"
+proptest = { version = "1", default-features = false, features = ["std"] }

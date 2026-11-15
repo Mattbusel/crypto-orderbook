@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0] - 2026-11-15
+
+### Added
+- **Coinbase Advanced Trade `level2`** (`venue::CoinbaseSync`): the same sans-IO design as `BookSync`. Snapshot and update events with absolute quantities (`"0"` removes), the per-connection `sequence_num` checked on every frame of the connection (heartbeats and subscription acks included), a jump while live drops the book with `GapReason::Sequence { expected, got }`, repeated or late frames are skipped, other products are ignored. `subscribe_message()` / `unsubscribe_message()` for the resubscribe that brings a fresh snapshot; `reset()` after a reconnect. `parse_coinbase_message` for the frames.
+- **Kraken WebSocket v2 `book`** (`venue::KrakenSync`): snapshot and updates applied in order, the book truncated to the subscribed depth after each message (Kraken sends no removals for levels pushed out of view), and the CRC32 checksum of the top 10 levels checked after every message; a mismatch drops the book with `GapReason::Checksum { expected, computed }`. Prices and quantities are read from the JSON text without going through `f64` and written with the pair's `price_precision` / `qty_precision`, which Kraken's own book channel example needs (`0.566` must be written `0.5660`). `kraken_checksum`, `kraken_checksum_input`, `parse_kraken_message`, and `parse_kraken_instruments` to read each pair's precision from the `instrument` channel.
+- **One API across venues** (`venue` module, re-exported at the crate root): the `Book` trait (best bid and ask, top levels, depth, plus derived spread, mid, micro-price, imbalance and `is_crossed`), implemented by `OrderBook`; the `VenueSync` trait (`on_frame` with raw text frames, `is_live`, `needs_snapshot`, `snapshot_source`, `stats`, `reset`), implemented by `BookSync`, `CoinbaseSync` and `KrakenSync`; `Venue`, `FeedOutcome`, `GapReason` and `SnapshotSource`. Through `VenueSync`, `BookSync::on_frame` takes both diff-depth frames and REST snapshot bodies.
+- `OrderBook::set_level` and `OrderBook::truncate`, the `Side` enum, and `PartialEq` on `orderbook::book::PriceLevel`.
+- `examples/follow_venue.rs`: one loop for Coinbase or Kraken through `VenueSync`, resubscribing on a resync, optionally recording every frame. Checked live on 2026-11-15: Kraken BTC/USD depth 10 (40 updates) and ETH/USD depth 25 (300 updates) with every checksum matching and 0 resyncs; Coinbase BTC-USD 100 updates in sequence, 0 resyncs.
+- **Replay tests** (`tests/venue_replay.rs`) on the venues' documentation samples: Kraken's book channel snapshot and update (checksums 2439117997 and 2114181697) and its checksum guide example (the guide's exact input string and CRC32 3310070434), Coinbase's `level2` snapshot and `heartbeats` examples. Plus the live recordings above: every Kraken update dropped in turn never leaves a wrong top 10 behind an applied message, and every Coinbase frame dropped in turn is caught on the next frame with the exact sequence numbers.
+- **Property tests** (`tests/venue_properties.rs`) for gap handling against reference models: Coinbase streams with lost and repeated frames across channels, and Kraken streams generated from a full book deeper than the subscription (with an independent checksum implementation), with lost messages and wrong checksums. Each of four deliberately broken rules (no truncation, ignoring sequence gaps, skipping the checksum, applying updates before a snapshot) fails at least one of them.
+
+### Changed
+- `Market` derives `Hash`. `serde_json` is built with `raw_value`.
+
 ## [0.4.0] - 2026-11-14
 
 ### Added

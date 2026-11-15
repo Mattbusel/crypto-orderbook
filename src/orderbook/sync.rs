@@ -32,7 +32,7 @@ use crate::orderbook::book::OrderBook;
 use crate::ws::binance::{DepthSnapshot, DepthUpdate};
 
 /// Which Binance market the book follows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Market {
     /// Spot (`api.binance.com`, `stream.binance.com`).
     Spot,

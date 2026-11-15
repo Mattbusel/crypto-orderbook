@@ -61,6 +61,46 @@ impl OrderBook {
         self.last_update_id = update.last_update_id;
     }
 
+    /// Set the total quantity resting at `price` on one side; a zero
+    /// quantity removes the level. This is the venue-neutral write used by
+    /// the Coinbase and Kraken syncs (both send absolute quantities, not
+    /// deltas). It does not touch [`last_update_id`](Self::last_update_id).
+    ///
+    /// ```
+    /// use crypto_orderbook::{OrderBook, Side};
+    /// use rust_decimal::Decimal;
+    ///
+    /// let mut book = OrderBook::new();
+    /// book.set_level(Side::Bid, Decimal::from(100), Decimal::from(2));
+    /// assert_eq!(book.best_bid().unwrap().quantity, Decimal::from(2));
+    /// book.set_level(Side::Bid, Decimal::from(100), Decimal::ZERO);
+    /// assert!(book.best_bid().is_none());
+    /// ```
+    pub fn set_level(&mut self, side: Side, price: Decimal, quantity: Decimal) {
+        let map = match side {
+            Side::Bid => &mut self.bids,
+            Side::Ask => &mut self.asks,
+        };
+        if quantity.is_zero() {
+            map.remove(&price);
+        } else {
+            map.insert(price, quantity);
+        }
+    }
+
+    /// Keep only the best `depth` levels on each side (the highest bids and
+    /// the lowest asks). Venues that stream a fixed-depth book, such as
+    /// Kraken, do not send removals for levels pushed out of that depth, so
+    /// the local book has to drop them itself.
+    pub fn truncate(&mut self, depth: usize) {
+        while self.bids.len() > depth {
+            self.bids.pop_first();
+        }
+        while self.asks.len() > depth {
+            self.asks.pop_last();
+        }
+    }
+
     /// The highest price any buyer is currently willing to pay.
     /// Returns None if the book has no bids yet.
     pub fn best_bid(&self) -> Option<PriceLevel> {
@@ -147,12 +187,23 @@ impl OrderBook {
     }
 }
 
+/// One side of an order book.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Side {
+    /// Buyers.
+    Bid,
+    /// Sellers (Coinbase calls this side `offer`).
+    Ask,
+}
+
 /// A single price level returned by queries on the book.
 /// Separate from the parser's PriceLevel so the book has no dependency on
 /// the Binance wire format.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PriceLevel {
+    /// Price of the level.
     pub price: Decimal,
+    /// Total quantity resting at that price.
     pub quantity: Decimal,
 }
 
@@ -249,6 +300,30 @@ mod tests {
         assert_eq!(top[0].price, dec!(101));
         assert_eq!(top[1].price, dec!(100));
         assert_eq!(top[2].price, dec!(99));
+    }
+
+    #[test]
+    fn set_level_inserts_overwrites_and_removes() {
+        let mut book = OrderBook::new();
+        book.set_level(Side::Ask, dec!(101), dec!(1));
+        book.set_level(Side::Ask, dec!(101), dec!(3));
+        book.set_level(Side::Ask, dec!(102), dec!(1));
+        assert_eq!(book.best_ask().unwrap(), PriceLevel { price: dec!(101), quantity: dec!(3) });
+        book.set_level(Side::Ask, dec!(101), dec!(0));
+        assert_eq!(book.best_ask().unwrap().price, dec!(102));
+        assert_eq!(book.ask_depth(), 1);
+    }
+
+    #[test]
+    fn truncate_keeps_the_best_levels() {
+        let mut book = OrderBook::new();
+        for p in [97, 98, 99, 100] {
+            book.set_level(Side::Bid, Decimal::from(p), dec!(1));
+            book.set_level(Side::Ask, Decimal::from(p + 10), dec!(1));
+        }
+        book.truncate(2);
+        assert_eq!(book.top_bids(10).iter().map(|l| l.price).collect::<Vec<_>>(), vec![dec!(100), dec!(99)]);
+        assert_eq!(book.top_asks(10).iter().map(|l| l.price).collect::<Vec<_>>(), vec![dec!(107), dec!(108)]);
     }
 
     #[test]

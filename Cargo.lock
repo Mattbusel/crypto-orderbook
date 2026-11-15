@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "crypto-orderbook"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
  "futures-util",

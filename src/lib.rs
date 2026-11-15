@@ -1,4 +1,5 @@
-//! A correctly sequenced Binance order book, as a library and as a service.
+//! Correctly sequenced order books for Binance, Coinbase and Kraken, as a
+//! library, and a Binance order book service.
 //!
 //! # Library
 //!
@@ -31,6 +32,15 @@
 //! assert_eq!(book.best_bid().unwrap().quantity.to_string(), "10");
 //! ```
 //!
+//! # Other venues
+//!
+//! [`venue`] runs Coinbase Advanced Trade `level2` ([`CoinbaseSync`],
+//! per-connection sequence numbers) and Kraken WebSocket v2 `book`
+//! ([`KrakenSync`], CRC32 checksum after every message) on the same sans-IO
+//! design, behind one API: the [`Book`] trait to read any venue's book and
+//! the [`VenueSync`] trait to feed raw frames to any venue's sync
+//! (implemented by [`BookSync`] too).
+//!
 //! Other building blocks:
 //!
 //! - [`orderbook::replay`]: record the raw feed to NDJSON and rebuild the
@@ -52,8 +62,10 @@ pub mod error;
 pub mod metrics;
 pub mod orderbook;
 pub mod trades;
+pub mod venue;
 pub mod ws;
 
-pub use orderbook::book::OrderBook;
+pub use orderbook::book::{OrderBook, Side};
 pub use orderbook::sync::{BookSync, Market, Outcome, ResyncReason, SnapshotOutcome, SyncState, SyncStats};
+pub use venue::{Book, CoinbaseSync, FeedOutcome, GapReason, KrakenSync, SnapshotSource, Venue, VenueSync};
 pub use ws::binance::{parse_depth_snapshot, parse_depth_update, DepthSnapshot, DepthUpdate, PriceLevel};

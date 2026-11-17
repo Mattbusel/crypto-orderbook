@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.1] - 2026-11-16
+
+- Package metadata only: `repository` points at https://github.com/Mattbusel/crypto-orderbook (the GitHub repository, where issues, releases and the dependents graph are), documentation link (docs.rs), no code change from 0.5.0.
+
 ## [0.5.0] - 2026-11-15
 
 ### Added

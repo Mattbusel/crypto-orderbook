@@ -1,12 +1,13 @@
 [package]
 name = "crypto-orderbook"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Correctly sequenced order books for Binance spot and USD-M futures, Coinbase Advanced Trade and Kraken v2 (checksum-validated): sans-IO sync state machines behind one API, plus a Binance service over HTTP, WebSocket and Prometheus"
 license = "MIT"
-repository = "https://gitlab.com/mattbusel/crypto-orderbook"
-homepage = "https://gitlab.com/mattbusel/crypto-orderbook"
+repository = "https://github.com/Mattbusel/crypto-orderbook"
+documentation = "https://docs.rs/crypto-orderbook"
+homepage = "https://github.com/Mattbusel/crypto-orderbook"
 readme = "README.md"
 keywords = ["orderbook", "binance", "coinbase", "kraken", "market-data"]
 categories = ["command-line-utilities", "finance", "network-programming"]

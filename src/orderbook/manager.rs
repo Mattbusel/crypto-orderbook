@@ -23,8 +23,8 @@ use crate::ws::WsEvent;
 // This prevents hammering a degraded Binance endpoint, which would consume
 // our rate-limit quota and make recovery slower, not faster.
 
-const OPEN_THRESHOLD: u32     = 5;
-const COOLDOWN: Duration       = Duration::from_secs(30);
+const OPEN_THRESHOLD: u32 = 5;
+const COOLDOWN: Duration = Duration::from_secs(30);
 
 // How many times to refetch a snapshot that is older than the first buffered
 // event before giving up on this cycle and letting BookSync resync.
@@ -33,7 +33,7 @@ const MAX_REFETCHES: u32 = 5;
 #[derive(Debug)]
 enum BreakerState {
     Closed { consecutive_failures: u32 },
-    Open   { opened_at: Instant },
+    Open { opened_at: Instant },
     HalfOpen,
 }
 
@@ -43,7 +43,11 @@ struct CircuitBreaker {
 
 impl CircuitBreaker {
     fn new() -> Self {
-        Self { state: BreakerState::Closed { consecutive_failures: 0 } }
+        Self {
+            state: BreakerState::Closed {
+                consecutive_failures: 0,
+            },
+        }
     }
 
     /// Returns true if the caller should attempt the request.
@@ -67,23 +71,36 @@ impl CircuitBreaker {
         if let BreakerState::HalfOpen = self.state {
             info!("circuit breaker closed: probe succeeded");
         }
-        self.state = BreakerState::Closed { consecutive_failures: 0 };
+        self.state = BreakerState::Closed {
+            consecutive_failures: 0,
+        };
     }
 
     fn record_failure(&mut self) {
         self.state = match self.state {
-            BreakerState::Closed { consecutive_failures } => {
+            BreakerState::Closed {
+                consecutive_failures,
+            } => {
                 let n = consecutive_failures + 1;
                 if n >= OPEN_THRESHOLD {
-                    warn!(failures = n, "circuit breaker OPEN: blocking snapshot requests");
-                    BreakerState::Open { opened_at: Instant::now() }
+                    warn!(
+                        failures = n,
+                        "circuit breaker OPEN: blocking snapshot requests"
+                    );
+                    BreakerState::Open {
+                        opened_at: Instant::now(),
+                    }
                 } else {
-                    BreakerState::Closed { consecutive_failures: n }
+                    BreakerState::Closed {
+                        consecutive_failures: n,
+                    }
                 }
             }
             BreakerState::HalfOpen => {
                 warn!("circuit breaker re-opened: probe failed");
-                BreakerState::Open { opened_at: Instant::now() }
+                BreakerState::Open {
+                    opened_at: Instant::now(),
+                }
             }
             BreakerState::Open { opened_at } => BreakerState::Open { opened_at },
         };
@@ -97,13 +114,13 @@ impl CircuitBreaker {
 /// Feed it the depth stream through `rx` (see [`crate::ws::client::spawn`])
 /// and call [`run`](Self::run). Readers lock `book` to query it.
 pub struct Manager {
-    rx:       mpsc::Receiver<WsEvent>,
-    book:     Arc<RwLock<OrderBook>>,
-    symbol:   String,
-    http:     reqwest::Client,
-    push_tx:  PushSender,
-    breaker:  CircuitBreaker,
-    market:   Market,
+    rx: mpsc::Receiver<WsEvent>,
+    book: Arc<RwLock<OrderBook>>,
+    symbol: String,
+    http: reqwest::Client,
+    push_tx: PushSender,
+    breaker: CircuitBreaker,
+    market: Market,
     rest_base: String,
     depth_limit: u32,
     max_buffer: usize,
@@ -121,9 +138,9 @@ impl Manager {
     /// A manager for `symbol` on spot with the default REST base; adjust
     /// with [`with_market`](Self::with_market).
     pub fn new(
-        rx:      mpsc::Receiver<WsEvent>,
-        book:    Arc<RwLock<OrderBook>>,
-        symbol:  String,
+        rx: mpsc::Receiver<WsEvent>,
+        book: Arc<RwLock<OrderBook>>,
+        symbol: String,
         push_tx: PushSender,
     ) -> Self {
         Self {
@@ -237,7 +254,12 @@ impl Manager {
                 snapshot = self.fetch_snapshot_with_retry().await;
             }
             if let Some(rec) = self.recorder.as_mut() {
-                if let Err(e) = rec.snapshot(self.market, snapshot.last_update_id, &snapshot.bids, &snapshot.asks) {
+                if let Err(e) = rec.snapshot(
+                    self.market,
+                    snapshot.last_update_id,
+                    &snapshot.bids,
+                    &snapshot.asks,
+                ) {
                     warn!(error = %e, "could not write to RECORD_FILE; recording stopped");
                     self.recorder = None;
                 }
@@ -249,7 +271,12 @@ impl Manager {
                 let mut book = self.book.write().expect("book lock poisoned");
                 sync.on_snapshot(&mut book, snapshot)
             };
-            info!(snapshot_id, applied = done.applied, skipped = done.skipped, "snapshot applied");
+            info!(
+                snapshot_id,
+                applied = done.applied,
+                skipped = done.skipped,
+                "snapshot applied"
+            );
             metrics::EVENTS_SKIPPED_TOTAL.inc_by(done.skipped as f64);
             metrics::UPDATES_APPLIED_TOTAL.inc_by(done.applied as f64);
             if let Some(reason) = done.resync {
@@ -326,8 +353,14 @@ impl Manager {
                 metrics::SEQUENCE_GAPS_TOTAL.inc();
                 error!(expected, got, "sequence gap detected, resyncing");
             }
-            ResyncReason::SnapshotTooOld { snapshot_id, first_update_id } => {
-                error!(snapshot_id, first_update_id, "snapshot does not connect to the stream, resyncing");
+            ResyncReason::SnapshotTooOld {
+                snapshot_id,
+                first_update_id,
+            } => {
+                error!(
+                    snapshot_id,
+                    first_update_id, "snapshot does not connect to the stream, resyncing"
+                );
             }
         }
     }
@@ -366,12 +399,19 @@ impl Manager {
                     metrics::SNAPSHOTS_TOTAL.inc();
                     return snap;
                 }
-                Err(SnapshotError::RateLimited { status, retry_after_secs }) => {
+                Err(SnapshotError::RateLimited {
+                    status,
+                    retry_after_secs,
+                }) => {
                     // Binance: keep sending after a 429 and the IP is banned
                     // (418) for minutes to days. Wait exactly as long as asked.
                     metrics::SNAPSHOT_RATE_LIMITED_TOTAL.inc();
                     let wait = retry_after_secs.unwrap_or(if status == 418 { 120 } else { 60 });
-                    error!(status, wait_secs = wait, "Binance rate limit on the snapshot; waiting as instructed");
+                    error!(
+                        status,
+                        wait_secs = wait,
+                        "Binance rate limit on the snapshot; waiting as instructed"
+                    );
                     tokio::time::sleep(Duration::from_secs(wait)).await;
                 }
                 Err(SnapshotError::Other(e)) => {
@@ -397,11 +437,9 @@ impl Manager {
             self.depth_limit
         );
 
-        let resp = self.http
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| SnapshotError::Other(AppError::InvalidField(format!("snapshot HTTP error: {e}"))))?;
+        let resp = self.http.get(&url).send().await.map_err(|e| {
+            SnapshotError::Other(AppError::InvalidField(format!("snapshot HTTP error: {e}")))
+        })?;
         if let Some(weight) = resp
             .headers()
             .get("x-mbx-used-weight-1m")
@@ -417,7 +455,10 @@ impl Manager {
                 .get(reqwest::header::RETRY_AFTER)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.trim().parse::<u64>().ok());
-            return Err(SnapshotError::RateLimited { status, retry_after_secs });
+            return Err(SnapshotError::RateLimited {
+                status,
+                retry_after_secs,
+            });
         }
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -426,10 +467,11 @@ impl Manager {
                 body.chars().take(200).collect::<String>()
             ))));
         }
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| SnapshotError::Other(AppError::InvalidField(format!("snapshot body read failed: {e}"))))?;
+        let body = resp.text().await.map_err(|e| {
+            SnapshotError::Other(AppError::InvalidField(format!(
+                "snapshot body read failed: {e}"
+            )))
+        })?;
         parse_depth_snapshot(&body).map_err(SnapshotError::Other)
     }
 }
@@ -450,7 +492,10 @@ fn publish_book(book: &OrderBook) {
 // Why a snapshot request failed: a rate limit is waited out as instructed,
 // anything else is retried with backoff.
 enum SnapshotError {
-    RateLimited { status: u16, retry_after_secs: Option<u64> },
+    RateLimited {
+        status: u16,
+        retry_after_secs: Option<u64>,
+    },
     Other(AppError),
 }
 

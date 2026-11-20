@@ -19,7 +19,8 @@ use proptest::prelude::*;
 use rust_decimal::Decimal;
 
 use crypto_orderbook::{
-    BookSync, DepthSnapshot, DepthUpdate, Market, OrderBook, Outcome, PriceLevel, ResyncReason, SyncState,
+    BookSync, DepthSnapshot, DepthUpdate, Market, OrderBook, Outcome, PriceLevel, ResyncReason,
+    SyncState,
 };
 
 type Side = BTreeMap<Decimal, Decimal>;
@@ -81,13 +82,16 @@ impl Model {
             if !(cuts[i % cuts.len()] || i + 1 == changes.len()) {
                 continue;
             }
-            let (mut b, mut a): (BTreeMap<Decimal, Decimal>, BTreeMap<Decimal, Decimal>) = Default::default();
+            let (mut b, mut a): (BTreeMap<Decimal, Decimal>, BTreeMap<Decimal, Decimal>) =
+                Default::default();
             for c in &changes[start..=i] {
                 let side = if c.bid { &mut b } else { &mut a };
                 side.insert(c.price(), Decimal::from(c.qty));
             }
             let levels = |m: BTreeMap<Decimal, Decimal>| {
-                m.into_iter().map(|(price, quantity)| PriceLevel { price, quantity }).collect()
+                m.into_iter()
+                    .map(|(price, quantity)| PriceLevel { price, quantity })
+                    .collect()
             };
             events.push(DepthUpdate {
                 first_update_id: ids[start],
@@ -100,17 +104,34 @@ impl Model {
             prev_u = ids[i];
             start = i + 1;
         }
-        Self { market, ids, truth, events, event_start }
+        Self {
+            market,
+            ids,
+            truth,
+            events,
+            event_start,
+        }
     }
 
     fn snapshot(&self, k: usize) -> DepthSnapshot {
         let (b, a) = &self.truth[k];
-        let levels = |m: &Side| m.iter().map(|(&price, &quantity)| PriceLevel { price, quantity }).collect();
-        DepthSnapshot { last_update_id: self.ids[k], bids: levels(b), asks: levels(a) }
+        let levels = |m: &Side| {
+            m.iter()
+                .map(|(&price, &quantity)| PriceLevel { price, quantity })
+                .collect()
+        };
+        DepthSnapshot {
+            last_update_id: self.ids[k],
+            bids: levels(b),
+            asks: levels(a),
+        }
     }
 
     fn truth_at(&self, id: u64) -> &(Side, Side) {
-        let k = self.ids.binary_search(&id).expect("state id is an update id");
+        let k = self
+            .ids
+            .binary_search(&id)
+            .expect("state id is an update id");
         &self.truth[k]
     }
 
@@ -135,8 +156,16 @@ impl Model {
 }
 
 fn book_sides(book: &OrderBook) -> (Side, Side) {
-    let b = book.top_bids(usize::MAX).into_iter().map(|l| (l.price, l.quantity)).collect();
-    let a = book.top_asks(usize::MAX).into_iter().map(|l| (l.price, l.quantity)).collect();
+    let b = book
+        .top_bids(usize::MAX)
+        .into_iter()
+        .map(|l| (l.price, l.quantity))
+        .collect();
+    let a = book
+        .top_asks(usize::MAX)
+        .into_iter()
+        .map(|l| (l.price, l.quantity))
+        .collect();
     (b, a)
 }
 
@@ -144,14 +173,27 @@ fn book_sides(book: &OrderBook) -> (Side, Side) {
 fn check(model: &Model, sync: &BookSync, book: &OrderBook) -> Result<(), TestCaseError> {
     match sync.state() {
         SyncState::Buffering => {
-            prop_assert_eq!(book.bid_depth() + book.ask_depth(), 0, "buffering with a non-empty book");
+            prop_assert_eq!(
+                book.bid_depth() + book.ask_depth(),
+                0,
+                "buffering with a non-empty book"
+            );
         }
         SyncState::Handshake { snapshot_id } => {
-            prop_assert_eq!(&book_sides(book), model.truth_at(snapshot_id), "handshake book != snapshot");
+            prop_assert_eq!(
+                &book_sides(book),
+                model.truth_at(snapshot_id),
+                "handshake book != snapshot"
+            );
         }
         SyncState::Live { last_update_id } => {
             prop_assert_eq!(book.last_update_id, last_update_id);
-            prop_assert_eq!(&book_sides(book), model.truth_at(last_update_id), "live book wrong at {}", last_update_id);
+            prop_assert_eq!(
+                &book_sides(book),
+                model.truth_at(last_update_id),
+                "live book wrong at {}",
+                last_update_id
+            );
         }
     }
     Ok(())
@@ -193,20 +235,33 @@ fn scenario_in(market: impl Strategy<Value = Market>) -> impl Strategy<Value = S
         any::<u32>(),
         prop::collection::vec(any::<u32>(), 8),
     )
-        .prop_map(|(market, changes, cuts, steps, r_start, r_k, r_before, picks)| {
-            let model = Model::build(market, &changes, &cuts, &steps);
-            let n_events = model.events.len();
-            let start = r_start as usize % n_events;
-            let lo = model.lowest_connecting_snapshot(start);
-            let k = lo + r_k as usize % (model.ids.len() - lo);
-            let before = 1 + r_before as usize % (n_events - start);
-            Scenario { model, start, k, before, picks }
-        })
+        .prop_map(
+            |(market, changes, cuts, steps, r_start, r_k, r_before, picks)| {
+                let model = Model::build(market, &changes, &cuts, &steps);
+                let n_events = model.events.len();
+                let start = r_start as usize % n_events;
+                let lo = model.lowest_connecting_snapshot(start);
+                let k = lo + r_k as usize % (model.ids.len() - lo);
+                let before = 1 + r_before as usize % (n_events - start);
+                Scenario {
+                    model,
+                    start,
+                    k,
+                    before,
+                    picks,
+                }
+            },
+        )
 }
 
 /// Feed `order` (event indices) with the snapshot after the first `before`
 /// of them, checking the invariant after every call.
-fn run(model: &Model, order: &[usize], before: usize, k: usize) -> Result<(BookSync, OrderBook, Vec<Outcome>), TestCaseError> {
+fn run(
+    model: &Model,
+    order: &[usize],
+    before: usize,
+    k: usize,
+) -> Result<(BookSync, OrderBook, Vec<Outcome>), TestCaseError> {
     let mut sync = BookSync::new(model.market);
     let mut book = OrderBook::new();
     let mut outcomes = Vec::new();
@@ -385,7 +440,18 @@ proptest! {
 fn reset_forgets_everything() {
     let model = Model::build(
         Market::Spot,
-        &[Change { bid: true, price: 1, qty: 1 }, Change { bid: false, price: 1, qty: 2 }],
+        &[
+            Change {
+                bid: true,
+                price: 1,
+                qty: 1,
+            },
+            Change {
+                bid: false,
+                price: 1,
+                qty: 2,
+            },
+        ],
         &[true],
         &[1],
     );
@@ -397,7 +463,10 @@ fn reset_forgets_everything() {
     assert!(sync.is_live());
     sync.reset(&mut book);
     assert_eq!(sync.state(), SyncState::Buffering);
-    assert_eq!((sync.buffered(), book.bid_depth(), book.ask_depth()), (0, 0, 0));
+    assert_eq!(
+        (sync.buffered(), book.bid_depth(), book.ask_depth()),
+        (0, 0, 0)
+    );
     assert!(!sync.needs_snapshot());
 }
 
@@ -405,7 +474,13 @@ fn reset_forgets_everything() {
 /// look too old, never let a gap through.
 #[test]
 fn buffer_overflow_drops_the_oldest_event() {
-    let changes: Vec<Change> = (0..6).map(|i| Change { bid: true, price: i, qty: 1 }).collect();
+    let changes: Vec<Change> = (0..6)
+        .map(|i| Change {
+            bid: true,
+            price: i,
+            qty: 1,
+        })
+        .collect();
     let model = Model::build(Market::Spot, &changes, &[true], &[1]);
     let mut sync = BookSync::new(Market::Spot).with_max_buffer(2);
     let mut book = OrderBook::new();
@@ -414,7 +489,10 @@ fn buffer_overflow_drops_the_oldest_event() {
     }
     assert_eq!(sync.buffered(), 2);
     assert_eq!(sync.stats().buffer_overflows, 2);
-    assert_eq!(sync.first_buffered_update_id(), Some(model.events[2].first_update_id));
+    assert_eq!(
+        sync.first_buffered_update_id(),
+        Some(model.events[2].first_update_id)
+    );
     // A snapshot from before the dropped events no longer connects.
     assert!(sync.snapshot_is_too_old(model.ids[0]));
     assert!(!sync.snapshot_is_too_old(model.ids[1]));

@@ -1,16 +1,39 @@
-# crypto-orderbook
+# crypto-orderbook: your local order book is wrong after the first dropped message
 
-<!-- outcome-block -->
-**A live Binance order book that stays correct: snapshot and diff stream stitched by update ID, any gap forces a resync, served over HTTP, WebSocket and Prometheus.**
+Binance, Coinbase and Kraken do not send you an order book. They send a snapshot and a stream of diffs, and the book is only correct if every diff connects to the one before it. Drop one message on a reconnect and a book that applies whatever arrives keeps showing a bid that was cancelled, with nothing in the API to tell you. crypto-orderbook takes the other side: **a book that cannot prove its sequence is cleared, not served.** Every gap is a resync, every Kraken update is checksum-validated, and the state machine that decides this does no I/O, so you can drop it into whatever socket code you already have.
 
-**Why this over the alternatives:** Homemade books silently drift after one dropped message. This follows Binance's documented sync procedure end to end and rebuilds on every gap.
+```sh
+cargo run --example catch_a_gap --no-default-features
+```
+```text
+snapshot 100 applied, 1 buffered event(s) replayed
+best bid Some((64250.10, 0.50))
+caught: Gap { expected: 103, got: 105 }
+book cleared (0 bids), new snapshot needed: true
+```
 
-**Guarantee:** if it doesn't do what this README says, [open an issue](https://github.com/Mattbusel/crypto-orderbook/issues) and I'll fix it.
-<!-- outcome-block -->
+**Why it exists.** Binance's own documentation spells out a six-step handshake (buffer the stream, fetch the snapshot, drop events at or before `lastUpdateId`, find the first event that straddles it, then require `U == previous u + 1` on spot and `pu == previous u` on USD-M futures). Coinbase needs sequence numbers checked per product, Kraken a CRC32 over the top ten levels. A GitHub code search for Binance's `lastUpdateId` in Rust on Nov 20 2026 returns files from 68 repositories. Each one is a place this handshake gets written again.
 
-A Rust service that keeps a live, correctly sequenced Binance spot order book in memory and serves it over HTTP, WebSocket and Prometheus.
+**Why this instead of your own.** One tested state machine for four markets (Binance spot and USD-M, Coinbase Advanced Trade, Kraken v2), checked by property tests against reference models (each of nine deliberately broken rules, such as accepting `U == lastUpdateId + 2` or skipping Kraken's checksum, fails at least one) and by replays of real recorded streams, with exact `rust_decimal` prices, and a typed reason on every resync (`SnapshotTooOld`, `Gap { expected, got }`). It never applies an event it cannot place.
 
-Building a local order book from an exchange feed is mostly about the edge cases: the REST snapshot and the WebSocket diff stream have to be stitched together by update ID, gaps must force a resync, and reconnects must not leave stale levels behind. This project implements Binance's documented snapshot-plus-diff procedure end to end with Tokio and Axum, and exposes the result as a small read-only API.
+**Why today.** `default-features = false` gives you only the sync state machines, the book and the parsers, on four dependencies (serde, serde_json, rust_decimal, thiserror). No Tokio, no HTTP client, no web server unless you ask for the service.
+
+**Who it is for:** Rust trading and market-data code that keeps its own L2 book from exchange WebSockets: market makers, arbitrage bots, recorders and terminals.
+
+**Trade-offs, on purpose:** it will drop your book and make you refetch a snapshot rather than guess; it covers four venues and does not try to cover forty; prices are `Decimal`, never `f64`.
+
+## Use it as a library
+
+```toml
+[dependencies]
+crypto-orderbook = { version = "0.5", default-features = false }
+```
+
+Feed it the frames your own socket reads: `BookSync::on_event` for each diff, `on_snapshot` when `needs_snapshot()` says so. `examples/catch_a_gap.rs` is the whole loop without a network; `examples/follow_book.rs` runs it against live Binance, `examples/follow_venue.rs` against Coinbase and Kraken.
+
+## Run it as a service
+
+The default `service` feature adds a Binance service that keeps the book in memory and serves it over HTTP, WebSocket and Prometheus.
 
 ## Features
 

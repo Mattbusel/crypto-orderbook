@@ -56,9 +56,16 @@
 //! The `crypto-orderbook` binary wires all of the above together; run
 //! `crypto-orderbook --help` for its settings.
 
+// The service's `AppError::WebSocket` wraps tungstenite's error, which is large; the
+// `Result`s that carry it are on the reconnect path, not per message, so it stays unboxed.
+#![cfg_attr(feature = "service", allow(clippy::result_large_err))]
+
+#[cfg(feature = "service")]
 pub mod api;
+#[cfg(feature = "service")]
 pub mod config;
 pub mod error;
+#[cfg(feature = "service")]
 pub mod metrics;
 pub mod orderbook;
 pub mod trades;
@@ -66,6 +73,12 @@ pub mod venue;
 pub mod ws;
 
 pub use orderbook::book::{OrderBook, Side};
-pub use orderbook::sync::{BookSync, Market, Outcome, ResyncReason, SnapshotOutcome, SyncState, SyncStats};
-pub use venue::{Book, CoinbaseSync, FeedOutcome, GapReason, KrakenSync, SnapshotSource, Venue, VenueSync};
-pub use ws::binance::{parse_depth_snapshot, parse_depth_update, DepthSnapshot, DepthUpdate, PriceLevel};
+pub use orderbook::sync::{
+    BookSync, Market, Outcome, ResyncReason, SnapshotOutcome, SyncState, SyncStats,
+};
+pub use venue::{
+    Book, CoinbaseSync, FeedOutcome, GapReason, KrakenSync, SnapshotSource, Venue, VenueSync,
+};
+pub use ws::binance::{
+    parse_depth_snapshot, parse_depth_update, DepthSnapshot, DepthUpdate, PriceLevel,
+};

@@ -143,17 +143,17 @@ fn convert(raw: RawDepthUpdate) -> Result<DepthUpdate> {
 /// parse as a valid number, that is a parse error — it belongs here, in the
 /// layer whose job is turning Binance's format into our format.
 fn parse_levels(raw: Vec<[String; 2]>) -> Result<Vec<PriceLevel>> {
-    raw.into_iter().map(|entry| {
-        let price = entry[0].parse::<Decimal>()
-            .map_err(|e| AppError::InvalidField(
-                format!("invalid price '{}': {}", entry[0], e)
-            ))?;
-        let quantity = entry[1].parse::<Decimal>()
-            .map_err(|e| AppError::InvalidField(
-                format!("invalid quantity '{}': {}", entry[1], e)
-            ))?;
-        Ok(PriceLevel { price, quantity })
-    }).collect()
+    raw.into_iter()
+        .map(|entry| {
+            let price = entry[0].parse::<Decimal>().map_err(|e| {
+                AppError::InvalidField(format!("invalid price '{}': {}", entry[0], e))
+            })?;
+            let quantity = entry[1].parse::<Decimal>().map_err(|e| {
+                AppError::InvalidField(format!("invalid quantity '{}': {}", entry[1], e))
+            })?;
+            Ok(PriceLevel { price, quantity })
+        })
+        .collect()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -202,9 +202,15 @@ mod tests {
 
     #[test]
     fn reads_pu_from_futures_events_and_none_from_spot() {
-        assert_eq!(parse_depth_update(SAMPLE).unwrap().prev_last_update_id, None);
+        assert_eq!(
+            parse_depth_update(SAMPLE).unwrap().prev_last_update_id,
+            None
+        );
         let futures = r#"{"e":"depthUpdate","E":1,"T":1,"s":"BTCUSDT","U":157,"u":160,"pu":149,"b":[],"a":[]}"#;
-        assert_eq!(parse_depth_update(futures).unwrap().prev_last_update_id, Some(149));
+        assert_eq!(
+            parse_depth_update(futures).unwrap().prev_last_update_id,
+            Some(149)
+        );
     }
 
     #[test]
@@ -215,8 +221,13 @@ mod tests {
         assert_eq!(s.bids[0].price.to_string(), "63832.12000000");
         assert_eq!(s.asks.len(), 1);
         let futures = r#"{"lastUpdateId":1027024,"E":1589436922972,"T":1589436922959,"bids":[["4.00000000","431.00000000"]],"asks":[["4.00000200","12.00000000"]]}"#;
-        assert_eq!(parse_depth_snapshot(futures).unwrap().last_update_id, 1027024);
-        assert!(parse_depth_snapshot(r#"{"lastUpdateId":1,"bids":[["x","1"]],"asks":[]}"#).is_err());
+        assert_eq!(
+            parse_depth_snapshot(futures).unwrap().last_update_id,
+            1027024
+        );
+        assert!(
+            parse_depth_snapshot(r#"{"lastUpdateId":1,"bids":[["x","1"]],"asks":[]}"#).is_err()
+        );
     }
 
     #[test]

@@ -4,6 +4,7 @@ use thiserror::Error;
 pub enum AppError {
     // WebSocket transport errors — network drops, TLS failures, protocol violations.
     // Recovery: reconnect the WebSocket, do not resync the book.
+    #[cfg(feature = "service")]
     #[error("WebSocket error: {0}")]
     WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
 
@@ -32,6 +33,7 @@ pub enum AppError {
     },
 
     // URL construction failed — only happens at startup with bad config.
+    #[cfg(feature = "service")]
     #[error("Invalid URL: {0}")]
     InvalidUrl(#[from] url::ParseError),
 

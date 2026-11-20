@@ -52,7 +52,9 @@ fn books_by_update(recording: &str) -> BTreeMap<u64, (Levels, Levels)> {
             }
             continue;
         }
-        let Record::Depth { raw, .. } = record else { unreachable!() };
+        let Record::Depth { raw, .. } = record else {
+            unreachable!()
+        };
         let update = parse_depth_update(&raw).expect("fixture event parses");
         match sync.as_mut() {
             None => early.push(update),
@@ -70,8 +72,14 @@ fn books_by_update(recording: &str) -> BTreeMap<u64, (Levels, Levels)> {
 
 fn top(book: &OrderBook) -> (Levels, Levels) {
     (
-        book.top_bids(TOP).into_iter().map(|l| (l.price, l.quantity)).collect(),
-        book.top_asks(TOP).into_iter().map(|l| (l.price, l.quantity)).collect(),
+        book.top_bids(TOP)
+            .into_iter()
+            .map(|l| (l.price, l.quantity))
+            .collect(),
+        book.top_asks(TOP)
+            .into_iter()
+            .map(|l| (l.price, l.quantity))
+            .collect(),
     )
 }
 
@@ -82,7 +90,10 @@ fn live_recordings_replay_without_gaps() {
         assert_eq!(r.snapshots, 1, "{name}");
         assert_eq!(r.events, events, "{name}");
         assert_eq!((r.gaps, r.bad_lines), (0, 0), "{name}");
-        assert_eq!(r.skipped, skipped, "{name}: the event before the snapshot is inside it");
+        assert_eq!(
+            r.skipped, skipped,
+            "{name}: the event before the snapshot is inside it"
+        );
         assert_eq!(r.applied, events - skipped, "{name}");
         assert_eq!(r.last_update_id, Some(LAST_ID), "{name}");
         let (bid, ask) = (r.best_bid.unwrap(), r.best_ask.unwrap());
@@ -95,7 +106,11 @@ fn books_from_independent_snapshots_agree_at_every_shared_update() {
     let a = books_by_update(A);
     let b = books_by_update(B);
     let shared: Vec<u64> = b.keys().filter(|u| a.contains_key(u)).copied().collect();
-    assert!(shared.len() >= 12, "only {} shared update ids", shared.len());
+    assert!(
+        shared.len() >= 12,
+        "only {} shared update ids",
+        shared.len()
+    );
     assert_eq!(shared.last(), Some(&LAST_ID));
     for u in shared {
         assert_eq!(a[&u], b[&u], "books differ at update {u}");
@@ -118,7 +133,10 @@ fn a_dropped_message_is_detected_as_a_gap() {
             .collect();
         let r = replay_reader(cut.as_bytes()).unwrap();
         assert_eq!(r.gaps, 1, "dropping line {drop}");
-        assert_eq!(r.last_update_id, None, "a book with a gap must not report prices");
+        assert_eq!(
+            r.last_update_id, None,
+            "a book with a gap must not report prices"
+        );
         assert_eq!(r.best_bid, None);
     }
 }
@@ -128,7 +146,11 @@ fn redelivered_messages_are_skipped_without_changing_the_book() {
     let doubled: String = A
         .lines()
         .flat_map(|l| {
-            let n = if l.contains("\"kind\":\"depth\"") { 2 } else { 1 };
+            let n = if l.contains("\"kind\":\"depth\"") {
+                2
+            } else {
+                1
+            };
             std::iter::repeat_n(format!("{l}\n"), n)
         })
         .collect();
@@ -138,7 +160,19 @@ fn redelivered_messages_are_skipped_without_changing_the_book() {
     assert_eq!(twice.applied, once.applied);
     assert_eq!(twice.skipped, once.skipped + once.events);
     assert_eq!(
-        (twice.best_bid, twice.best_ask, twice.bid_depth, twice.ask_depth, twice.last_update_id),
-        (once.best_bid, once.best_ask, once.bid_depth, once.ask_depth, once.last_update_id)
+        (
+            twice.best_bid,
+            twice.best_ask,
+            twice.bid_depth,
+            twice.ask_depth,
+            twice.last_update_id
+        ),
+        (
+            once.best_bid,
+            once.best_ask,
+            once.bid_depth,
+            once.ask_depth,
+            once.last_update_id
+        )
     );
 }

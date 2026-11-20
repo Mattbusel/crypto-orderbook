@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.2] - 2026-11-20
+
+### Changed
+- **The library no longer pulls in the service.** A new default feature, `service`, carries the Binance service and its dependencies (Tokio, tokio-tungstenite, Axum, tower-http, reqwest, Prometheus, tracing, url). With `default-features = false` the crate is the sans-IO sync state machines (`BookSync`, `CoinbaseSync`, `KrakenSync`), the book and the parsers, on serde, serde_json, rust_decimal and thiserror. Default builds are unchanged. Without `service`, `AppError` has no `WebSocket` or `InvalidUrl` variant and the `api`, `config`, `metrics`, `orderbook::manager`, `trades::manager` and `ws::client` modules are not compiled.
+- README opens with the problem: a book that applies whatever arrives is wrong after the first dropped message, and this crate clears it instead of serving it.
+
+### Added
+- `examples/catch_a_gap.rs`: a snapshot, a dropped diff and the resync that catches it, with no network and no async runtime (`cargo run --example catch_a_gap --no-default-features`).
+
 ## [0.5.1] - 2026-11-16
 
 - Package metadata only: `repository` points at https://github.com/Mattbusel/crypto-orderbook (the GitHub repository, where issues, releases and the dependents graph are), documentation link (docs.rs), no code change from 0.5.0.

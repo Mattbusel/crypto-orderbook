@@ -417,7 +417,11 @@ impl BookSync {
     }
 
     /// Replace the book with `snapshot` and replay the buffered events onto it.
-    pub fn on_snapshot(&mut self, book: &mut OrderBook, snapshot: DepthSnapshot) -> SnapshotOutcome {
+    pub fn on_snapshot(
+        &mut self,
+        book: &mut OrderBook,
+        snapshot: DepthSnapshot,
+    ) -> SnapshotOutcome {
         self.stats.snapshots += 1;
         let snapshot_id = snapshot.last_update_id;
         book.clear();
@@ -451,7 +455,12 @@ impl BookSync {
         self.buffer.push_back(update);
     }
 
-    fn resync(&mut self, book: &mut OrderBook, update: DepthUpdate, reason: ResyncReason) -> Outcome {
+    fn resync(
+        &mut self,
+        book: &mut OrderBook,
+        update: DepthUpdate,
+        reason: ResyncReason,
+    ) -> Outcome {
         book.clear();
         self.buffer.clear();
         self.stats.resyncs += 1;
@@ -468,28 +477,34 @@ impl BookSync {
                 self.buffer_push(update);
                 Outcome::Buffered
             }
-            SyncState::Handshake { snapshot_id } => match handshake(self.market, snapshot_id, &update) {
-                Handshake::Stale => {
-                    self.stats.skipped += 1;
-                    Outcome::Skipped
+            SyncState::Handshake { snapshot_id } => {
+                match handshake(self.market, snapshot_id, &update) {
+                    Handshake::Stale => {
+                        self.stats.skipped += 1;
+                        Outcome::Skipped
+                    }
+                    Handshake::Gap => {
+                        let reason = ResyncReason::SnapshotTooOld {
+                            snapshot_id,
+                            first_update_id: update.first_update_id,
+                        };
+                        self.resync(book, update, reason)
+                    }
+                    Handshake::Apply => self.apply(book, &update),
                 }
-                Handshake::Gap => {
-                    let reason = ResyncReason::SnapshotTooOld {
-                        snapshot_id,
-                        first_update_id: update.first_update_id,
-                    };
-                    self.resync(book, update, reason)
+            }
+            SyncState::Live { last_update_id } => {
+                match live(self.market, last_update_id, &update) {
+                    Live::Apply => self.apply(book, &update),
+                    Live::Ignore => {
+                        self.stats.skipped += 1;
+                        Outcome::Skipped
+                    }
+                    Live::Gap { expected, got } => {
+                        self.resync(book, update, ResyncReason::Gap { expected, got })
+                    }
                 }
-                Handshake::Apply => self.apply(book, &update),
-            },
-            SyncState::Live { last_update_id } => match live(self.market, last_update_id, &update) {
-                Live::Apply => self.apply(book, &update),
-                Live::Ignore => {
-                    self.stats.skipped += 1;
-                    Outcome::Skipped
-                }
-                Live::Gap { expected, got } => self.resync(book, update, ResyncReason::Gap { expected, got }),
-            },
+            }
         }
     }
 
@@ -647,7 +662,10 @@ mod tests {
         // Spot ids are contiguous: a snapshot at U - 1 is followed by U.
         assert!(!snapshot_is_too_old(Market::Spot, 99, 100));
         assert!(snapshot_is_too_old(Market::Spot, 98, 100));
-        assert_eq!(handshake(Market::Spot, 99, &ev(100, 105, None)), Handshake::Apply);
+        assert_eq!(
+            handshake(Market::Spot, 99, &ev(100, 105, None)),
+            Handshake::Apply
+        );
     }
 
     #[test]
@@ -658,8 +676,14 @@ mod tests {
 
     #[test]
     fn ids_near_u64_max_do_not_overflow() {
-        assert_eq!(handshake(Market::Spot, u64::MAX, &ev(u64::MAX, u64::MAX, None)), Handshake::Stale);
-        assert_eq!(live(Market::Spot, u64::MAX - 1, &ev(u64::MAX, u64::MAX, None)), Live::Apply);
+        assert_eq!(
+            handshake(Market::Spot, u64::MAX, &ev(u64::MAX, u64::MAX, None)),
+            Handshake::Stale
+        );
+        assert_eq!(
+            live(Market::Spot, u64::MAX - 1, &ev(u64::MAX, u64::MAX, None)),
+            Live::Apply
+        );
         assert!(!snapshot_is_too_old(Market::Spot, u64::MAX, u64::MAX));
     }
 
@@ -667,25 +691,56 @@ mod tests {
     fn book_sync_follows_a_futures_stream_through_a_resync() {
         let mut book = OrderBook::new();
         let mut sync = BookSync::new(Market::UsdM);
-        assert_eq!(sync.on_event(&mut book, ev(90, 98, Some(80))), Outcome::Buffered);
-        assert_eq!(sync.on_event(&mut book, ev(99, 104, Some(98))), Outcome::Buffered);
+        assert_eq!(
+            sync.on_event(&mut book, ev(90, 98, Some(80))),
+            Outcome::Buffered
+        );
+        assert_eq!(
+            sync.on_event(&mut book, ev(99, 104, Some(98))),
+            Outcome::Buffered
+        );
         let done = sync.on_snapshot(
             &mut book,
-            DepthSnapshot { last_update_id: 100, bids: vec![], asks: vec![] },
+            DepthSnapshot {
+                last_update_id: 100,
+                bids: vec![],
+                asks: vec![],
+            },
         );
         assert_eq!((done.skipped, done.applied, done.resync), (1, 1, None));
-        assert_eq!(sync.state(), SyncState::Live { last_update_id: 104 });
-        assert_eq!(sync.on_event(&mut book, ev(110, 120, Some(104))), Outcome::Applied);
-        assert_eq!(sync.on_event(&mut book, ev(110, 120, Some(104))), Outcome::Skipped);
+        assert_eq!(
+            sync.state(),
+            SyncState::Live {
+                last_update_id: 104
+            }
+        );
+        assert_eq!(
+            sync.on_event(&mut book, ev(110, 120, Some(104))),
+            Outcome::Applied
+        );
+        assert_eq!(
+            sync.on_event(&mut book, ev(110, 120, Some(104))),
+            Outcome::Skipped
+        );
         assert_eq!(
             sync.on_event(&mut book, ev(130, 140, Some(125))),
-            Outcome::Resync(ResyncReason::Gap { expected: 120, got: 125 })
+            Outcome::Resync(ResyncReason::Gap {
+                expected: 120,
+                got: 125
+            })
         );
         assert!(sync.needs_snapshot());
         assert_eq!(sync.first_buffered_update_id(), Some(130));
         assert_eq!(
             sync.stats(),
-            SyncStats { events: 5, applied: 2, skipped: 2, snapshots: 1, resyncs: 1, buffer_overflows: 0 }
+            SyncStats {
+                events: 5,
+                applied: 2,
+                skipped: 2,
+                snapshots: 1,
+                resyncs: 1,
+                buffer_overflows: 0
+            }
         );
     }
 }

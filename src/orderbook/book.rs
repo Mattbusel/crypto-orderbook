@@ -10,6 +10,7 @@ use crate::ws::binance::DepthUpdate;
 /// BTreeMap keeps entries sorted by price automatically, which means:
 ///   - best ask = first entry in asks (lowest seller)
 ///   - best bid = last entry in bids (highest buyer)
+///
 /// Both are O(log n) to find, update, and remove.
 pub struct OrderBook {
     /// Buyers: maps price -> quantity. Sorted ascending, so best bid is at the back.
@@ -104,13 +105,19 @@ impl OrderBook {
     /// The highest price any buyer is currently willing to pay.
     /// Returns None if the book has no bids yet.
     pub fn best_bid(&self) -> Option<PriceLevel> {
-        self.bids.iter().next_back().map(|(&price, &quantity)| PriceLevel { price, quantity })
+        self.bids
+            .iter()
+            .next_back()
+            .map(|(&price, &quantity)| PriceLevel { price, quantity })
     }
 
     /// The lowest price any seller is currently willing to accept.
     /// Returns None if the book has no asks yet.
     pub fn best_ask(&self) -> Option<PriceLevel> {
-        self.asks.iter().next().map(|(&price, &quantity)| PriceLevel { price, quantity })
+        self.asks
+            .iter()
+            .next()
+            .map(|(&price, &quantity)| PriceLevel { price, quantity })
     }
 
     /// The gap between the best ask and the best bid.
@@ -237,16 +244,34 @@ mod tests {
             first_update_id: first,
             last_update_id: last,
             prev_last_update_id: None,
-            bids: bids.into_iter().map(|(p, q)| ParsedLevel { price: p, quantity: q }).collect(),
-            asks: asks.into_iter().map(|(p, q)| ParsedLevel { price: p, quantity: q }).collect(),
+            bids: bids
+                .into_iter()
+                .map(|(p, q)| ParsedLevel {
+                    price: p,
+                    quantity: q,
+                })
+                .collect(),
+            asks: asks
+                .into_iter()
+                .map(|(p, q)| ParsedLevel {
+                    price: p,
+                    quantity: q,
+                })
+                .collect(),
         }
     }
 
     #[test]
     fn best_bid_is_highest_buyer() {
         let mut book = OrderBook::new();
-        book.apply(&make_update(1, 1,
-            vec![(dec!(100), dec!(1)), (dec!(101), dec!(2)), (dec!(99), dec!(3))],
+        book.apply(&make_update(
+            1,
+            1,
+            vec![
+                (dec!(100), dec!(1)),
+                (dec!(101), dec!(2)),
+                (dec!(99), dec!(3)),
+            ],
             vec![],
         ));
         assert_eq!(book.best_bid().unwrap().price, dec!(101));
@@ -255,9 +280,15 @@ mod tests {
     #[test]
     fn best_ask_is_lowest_seller() {
         let mut book = OrderBook::new();
-        book.apply(&make_update(1, 1,
+        book.apply(&make_update(
+            1,
+            1,
             vec![],
-            vec![(dec!(102), dec!(1)), (dec!(103), dec!(2)), (dec!(104), dec!(3))],
+            vec![
+                (dec!(102), dec!(1)),
+                (dec!(103), dec!(2)),
+                (dec!(104), dec!(3)),
+            ],
         ));
         assert_eq!(book.best_ask().unwrap().price, dec!(102));
     }
@@ -265,16 +296,10 @@ mod tests {
     #[test]
     fn zero_quantity_removes_level() {
         let mut book = OrderBook::new();
-        book.apply(&make_update(1, 1,
-            vec![(dec!(100), dec!(5))],
-            vec![],
-        ));
+        book.apply(&make_update(1, 1, vec![(dec!(100), dec!(5))], vec![]));
         assert_eq!(book.bid_depth(), 1);
 
-        book.apply(&make_update(2, 2,
-            vec![(dec!(100), dec!(0))],
-            vec![],
-        ));
+        book.apply(&make_update(2, 2, vec![(dec!(100), dec!(0))], vec![]));
         assert_eq!(book.bid_depth(), 0);
         assert!(book.best_bid().is_none());
     }
@@ -282,7 +307,9 @@ mod tests {
     #[test]
     fn spread_is_ask_minus_bid() {
         let mut book = OrderBook::new();
-        book.apply(&make_update(1, 1,
+        book.apply(&make_update(
+            1,
+            1,
             vec![(dec!(100), dec!(1))],
             vec![(dec!(102), dec!(1))],
         ));
@@ -292,8 +319,14 @@ mod tests {
     #[test]
     fn top_bids_ordered_highest_first() {
         let mut book = OrderBook::new();
-        book.apply(&make_update(1, 1,
-            vec![(dec!(100), dec!(1)), (dec!(101), dec!(2)), (dec!(99), dec!(3))],
+        book.apply(&make_update(
+            1,
+            1,
+            vec![
+                (dec!(100), dec!(1)),
+                (dec!(101), dec!(2)),
+                (dec!(99), dec!(3)),
+            ],
             vec![],
         ));
         let top = book.top_bids(3);
@@ -308,7 +341,13 @@ mod tests {
         book.set_level(Side::Ask, dec!(101), dec!(1));
         book.set_level(Side::Ask, dec!(101), dec!(3));
         book.set_level(Side::Ask, dec!(102), dec!(1));
-        assert_eq!(book.best_ask().unwrap(), PriceLevel { price: dec!(101), quantity: dec!(3) });
+        assert_eq!(
+            book.best_ask().unwrap(),
+            PriceLevel {
+                price: dec!(101),
+                quantity: dec!(3)
+            }
+        );
         book.set_level(Side::Ask, dec!(101), dec!(0));
         assert_eq!(book.best_ask().unwrap().price, dec!(102));
         assert_eq!(book.ask_depth(), 1);
@@ -322,14 +361,28 @@ mod tests {
             book.set_level(Side::Ask, Decimal::from(p + 10), dec!(1));
         }
         book.truncate(2);
-        assert_eq!(book.top_bids(10).iter().map(|l| l.price).collect::<Vec<_>>(), vec![dec!(100), dec!(99)]);
-        assert_eq!(book.top_asks(10).iter().map(|l| l.price).collect::<Vec<_>>(), vec![dec!(107), dec!(108)]);
+        assert_eq!(
+            book.top_bids(10)
+                .iter()
+                .map(|l| l.price)
+                .collect::<Vec<_>>(),
+            vec![dec!(100), dec!(99)]
+        );
+        assert_eq!(
+            book.top_asks(10)
+                .iter()
+                .map(|l| l.price)
+                .collect::<Vec<_>>(),
+            vec![dec!(107), dec!(108)]
+        );
     }
 
     #[test]
     fn clear_resets_everything() {
         let mut book = OrderBook::new();
-        book.apply(&make_update(1, 5,
+        book.apply(&make_update(
+            1,
+            5,
             vec![(dec!(100), dec!(1))],
             vec![(dec!(101), dec!(1))],
         ));

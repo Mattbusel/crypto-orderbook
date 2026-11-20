@@ -13,15 +13,27 @@ use once_cell::sync::Lazy;
 use prometheus::{register_counter, register_gauge, Counter, Gauge};
 
 pub static SYNCED: Lazy<Gauge> = Lazy::new(|| {
-    register_gauge!("orderbook_synced", "1 while the book is live and in sequence, 0 while syncing").unwrap()
+    register_gauge!(
+        "orderbook_synced",
+        "1 while the book is live and in sequence, 0 while syncing"
+    )
+    .unwrap()
 });
 
 pub static LAST_UPDATE_ID: Lazy<Gauge> = Lazy::new(|| {
-    register_gauge!("orderbook_last_update_id", "Binance update id the book is correct as of (0 while syncing)").unwrap()
+    register_gauge!(
+        "orderbook_last_update_id",
+        "Binance update id the book is correct as of (0 while syncing)"
+    )
+    .unwrap()
 });
 
 pub static BUFFERED_EVENTS: Lazy<Gauge> = Lazy::new(|| {
-    register_gauge!("orderbook_buffered_events", "Depth events held while waiting for a snapshot").unwrap()
+    register_gauge!(
+        "orderbook_buffered_events",
+        "Depth events held while waiting for a snapshot"
+    )
+    .unwrap()
 });
 
 pub static RESYNCS_TOTAL: Lazy<Counter> = Lazy::new(|| {
@@ -41,7 +53,11 @@ pub static EVENTS_SKIPPED_TOTAL: Lazy<Counter> = Lazy::new(|| {
 });
 
 pub static PARSE_ERRORS_TOTAL: Lazy<Counter> = Lazy::new(|| {
-    register_counter!("orderbook_parse_errors_total", "Depth frames that could not be parsed").unwrap()
+    register_counter!(
+        "orderbook_parse_errors_total",
+        "Depth frames that could not be parsed"
+    )
+    .unwrap()
 });
 
 pub static SNAPSHOT_REFETCHES_TOTAL: Lazy<Counter> = Lazy::new(|| {
@@ -61,15 +77,27 @@ pub static SNAPSHOT_FAILURES_TOTAL: Lazy<Counter> = Lazy::new(|| {
 });
 
 pub static WS_EVENTS_TOTAL: Lazy<Counter> = Lazy::new(|| {
-    register_counter!("orderbook_ws_events_total", "Depth events received and parsed from the Binance WebSocket").unwrap()
+    register_counter!(
+        "orderbook_ws_events_total",
+        "Depth events received and parsed from the Binance WebSocket"
+    )
+    .unwrap()
 });
 
 pub static WS_RECONNECTS_TOTAL: Lazy<Counter> = Lazy::new(|| {
-    register_counter!("orderbook_ws_reconnects_total", "WebSocket reconnection count").unwrap()
+    register_counter!(
+        "orderbook_ws_reconnects_total",
+        "WebSocket reconnection count"
+    )
+    .unwrap()
 });
 
 pub static SNAPSHOTS_TOTAL: Lazy<Counter> = Lazy::new(|| {
-    register_counter!("orderbook_snapshots_total", "REST snapshots successfully fetched").unwrap()
+    register_counter!(
+        "orderbook_snapshots_total",
+        "REST snapshots successfully fetched"
+    )
+    .unwrap()
 });
 
 pub static SNAPSHOT_RATE_LIMITED_TOTAL: Lazy<Counter> = Lazy::new(|| {
@@ -89,11 +117,19 @@ pub static REST_USED_WEIGHT_1M: Lazy<Gauge> = Lazy::new(|| {
 });
 
 pub static SEQUENCE_GAPS_TOTAL: Lazy<Counter> = Lazy::new(|| {
-    register_counter!("orderbook_sequence_gaps_total", "Sequence gaps that triggered resync").unwrap()
+    register_counter!(
+        "orderbook_sequence_gaps_total",
+        "Sequence gaps that triggered resync"
+    )
+    .unwrap()
 });
 
 pub static UPDATES_APPLIED_TOTAL: Lazy<Counter> = Lazy::new(|| {
-    register_counter!("orderbook_updates_applied_total", "Depth updates applied to book").unwrap()
+    register_counter!(
+        "orderbook_updates_applied_total",
+        "Depth updates applied to book"
+    )
+    .unwrap()
 });
 
 pub static BID_DEPTH: Lazy<Gauge> = Lazy::new(|| {
@@ -109,12 +145,15 @@ pub static SPREAD: Lazy<Gauge> = Lazy::new(|| {
 });
 
 pub static TRADE_VWAP_1M: Lazy<Gauge> = Lazy::new(|| {
-    register_gauge!("orderbook_vwap_1m", "1-minute rolling VWAP from trade stream").unwrap()
+    register_gauge!(
+        "orderbook_vwap_1m",
+        "1-minute rolling VWAP from trade stream"
+    )
+    .unwrap()
 });
 
-pub static TRADE_VOLUME_1M: Lazy<Gauge> = Lazy::new(|| {
-    register_gauge!("orderbook_volume_1m", "1-minute rolling trade volume").unwrap()
-});
+pub static TRADE_VOLUME_1M: Lazy<Gauge> =
+    Lazy::new(|| register_gauge!("orderbook_volume_1m", "1-minute rolling trade volume").unwrap());
 
 /// Force all lazy statics to initialize so they appear in /metrics at zero
 /// before any events arrive. This prevents missing metrics confusing dashboards.
@@ -146,7 +185,9 @@ pub fn gather_text() -> String {
     use prometheus::TextEncoder;
     let encoder = TextEncoder::new();
     let metric_families = prometheus::gather();
-    encoder.encode_to_string(&metric_families).unwrap_or_default()
+    encoder
+        .encode_to_string(&metric_families)
+        .unwrap_or_default()
 }
 
 /// The Prometheus content type for [`gather_text`].
@@ -166,6 +207,11 @@ pub fn router() -> axum::Router {
     init_all();
     axum::Router::new().route(
         "/metrics",
-        axum::routing::get(|| async { ([(axum::http::header::CONTENT_TYPE, CONTENT_TYPE)], gather_text()) }),
+        axum::routing::get(|| async {
+            (
+                [(axum::http::header::CONTENT_TYPE, CONTENT_TYPE)],
+                gather_text(),
+            )
+        }),
     )
 }

@@ -1,4 +1,5 @@
 pub mod book;
+#[cfg(feature = "service")]
 pub mod manager;
-pub mod sync;
 pub mod replay;
+pub mod sync;

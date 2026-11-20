@@ -1,10 +1,10 @@
 use std::sync::{Arc, RwLock};
 
-use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use serde::Deserialize;
-use tracing::warn;
 use tokio::sync::mpsc;
+use tracing::warn;
 
 use crate::metrics;
 use crate::trades::vwap::VwapWindow;
@@ -25,7 +25,7 @@ struct RawTrade {
 
 /// Consumes the trade WebSocket stream and feeds the rolling VWAP window.
 pub struct TradeManager {
-    rx:   mpsc::Receiver<WsEvent>,
+    rx: mpsc::Receiver<WsEvent>,
     vwap: Arc<RwLock<VwapWindow>>,
 }
 
@@ -41,7 +41,7 @@ impl TradeManager {
                 Some(WsEvent::Reconnected) => continue,
                 Some(WsEvent::Message(raw)) => {
                     let trade: RawTrade = match serde_json::from_str(&raw) {
-                        Ok(t)  => t,
+                        Ok(t) => t,
                         Err(e) => {
                             warn!(error = %e, "failed to parse trade event");
                             continue;
@@ -49,11 +49,11 @@ impl TradeManager {
                     };
 
                     let price = match trade.price.parse::<Decimal>() {
-                        Ok(p)  => p,
+                        Ok(p) => p,
                         Err(_) => continue,
                     };
                     let qty = match trade.quantity.parse::<Decimal>() {
-                        Ok(q)  => q,
+                        Ok(q) => q,
                         Err(_) => continue,
                     };
 

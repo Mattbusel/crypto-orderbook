@@ -9,10 +9,10 @@ use tracing::info;
 
 use crypto_orderbook::api::routes::{router, AppState};
 use crypto_orderbook::config::Config;
+use crypto_orderbook::metrics;
 use crypto_orderbook::orderbook::{self, book::OrderBook, manager::Manager};
 use crypto_orderbook::trades::{manager::TradeManager, vwap::VwapWindow};
 use crypto_orderbook::ws::client;
-use crypto_orderbook::metrics;
 
 // How many messages the broadcast channel buffers per subscriber.
 // If a slow client falls more than this many updates behind, it starts
@@ -69,7 +69,10 @@ async fn main() {
         };
         match orderbook::replay::replay(std::path::Path::new(path)) {
             Ok(r) => {
-                println!("snapshots {}  events {}  applied {}  skipped {}  gaps {}  bad lines {}", r.snapshots, r.events, r.applied, r.skipped, r.gaps, r.bad_lines);
+                println!(
+                    "snapshots {}  events {}  applied {}  skipped {}  gaps {}  bad lines {}",
+                    r.snapshots, r.events, r.applied, r.skipped, r.gaps, r.bad_lines
+                );
                 match (r.best_bid, r.best_ask) {
                     (Some((bp, bq)), Some((ap, aq))) => println!(
                         "final book at update {}: best bid {bp} x {bq}, best ask {ap} x {aq}, spread {}, {} bid / {} ask levels",
@@ -86,9 +89,11 @@ async fn main() {
         }
     }
     if let Some(unknown) = args.first() {
-        eprintln!("unknown argument: {unknown}
+        eprintln!(
+            "unknown argument: {unknown}
 
-{HELP}");
+{HELP}"
+        );
         std::process::exit(2);
     }
 
@@ -144,15 +149,18 @@ async fn main() {
     tokio::spawn(TradeManager::new(trade_rx, Arc::clone(&vwap)).run());
 
     let state = AppState {
-        book:    Arc::clone(&book),
-        vwap:    Arc::clone(&vwap),
-        symbol:  cfg.symbol.clone(),
+        book: Arc::clone(&book),
+        vwap: Arc::clone(&vwap),
+        symbol: cfg.symbol.clone(),
         push_tx: push_tx.clone(),
     };
 
     let addr = SocketAddr::from(([0, 0, 0, 0], cfg.api_port));
     info!(%addr, "HTTP API listening");
-    info!("try http://localhost:{}/book/best once /health reports synced", cfg.api_port);
+    info!(
+        "try http://localhost:{}/book/best once /health reports synced",
+        cfg.api_port
+    );
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await

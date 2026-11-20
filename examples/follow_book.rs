@@ -13,15 +13,24 @@
 use futures_util::StreamExt;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use crypto_orderbook::{parse_depth_snapshot, parse_depth_update, BookSync, Market, OrderBook, Outcome};
+use crypto_orderbook::{
+    parse_depth_snapshot, parse_depth_update, BookSync, Market, OrderBook, Outcome,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let symbol = std::env::var("SYMBOL").unwrap_or_else(|_| "BTCUSDT".into());
-    let rest = std::env::var("REST_BASE").unwrap_or_else(|_| Market::Spot.default_rest_base().into());
+    let rest =
+        std::env::var("REST_BASE").unwrap_or_else(|_| Market::Spot.default_rest_base().into());
     let ws = std::env::var("WS_URL").unwrap_or_else(|_| Market::Spot.default_ws_url(&symbol));
-    let wanted: usize = std::env::var("EVENTS").ok().and_then(|v| v.parse().ok()).unwrap_or(30);
-    let snapshot_url = format!("{rest}{}?symbol={symbol}&limit=100", Market::Spot.depth_path());
+    let wanted: usize = std::env::var("EVENTS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30);
+    let snapshot_url = format!(
+        "{rest}{}?symbol={symbol}&limit=100",
+        Market::Spot.depth_path()
+    );
 
     let (mut stream, _) = connect_async(ws.as_str()).await?;
     let http = reqwest::Client::new();
@@ -30,8 +39,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut applied = 0;
 
     while let Some(frame) = stream.next().await {
-        let Message::Text(text) = frame? else { continue };
-        let Ok(update) = parse_depth_update(&text) else { continue };
+        let Message::Text(text) = frame? else {
+            continue;
+        };
+        let Ok(update) = parse_depth_update(&text) else {
+            continue;
+        };
 
         match sync.on_event(&mut book, update) {
             Outcome::Applied => {
@@ -55,7 +68,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // events meanwhile, which is enough here.)
         if sync.needs_snapshot() {
             loop {
-                let body = http.get(&snapshot_url).send().await?.error_for_status()?.text().await?;
+                let body = http
+                    .get(&snapshot_url)
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .text()
+                    .await?;
                 let snapshot = parse_depth_snapshot(&body)?;
                 if sync.snapshot_is_too_old(snapshot.last_update_id) {
                     tokio::time::sleep(std::time::Duration::from_millis(250)).await;

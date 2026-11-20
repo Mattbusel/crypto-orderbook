@@ -1,5 +1,8 @@
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State},
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        State,
+    },
     response::IntoResponse,
 };
 use serde::Serialize;
@@ -13,11 +16,11 @@ use crate::orderbook::book::PriceLevel;
 /// Clients that need depth can call /book/snapshot on demand.
 #[derive(Serialize, Clone)]
 pub struct BookPush {
-    pub symbol:         String,
+    pub symbol: String,
     pub best_bid_price: Option<String>,
     pub best_ask_price: Option<String>,
-    pub spread:         Option<String>,
-    pub micro_price:    Option<String>,
+    pub spread: Option<String>,
+    pub micro_price: Option<String>,
     pub last_update_id: u64,
 }
 
@@ -82,11 +85,11 @@ pub fn serialize_push(
     last_update_id: u64,
 ) -> Option<String> {
     let push = BookPush {
-        symbol:         symbol.to_owned(),
+        symbol: symbol.to_owned(),
         best_bid_price: bid.map(|l| l.price.to_string()),
         best_ask_price: ask.map(|l| l.price.to_string()),
-        spread:         spread.map(|s| s.to_string()),
-        micro_price:    micro_price.map(|m| m.to_string()),
+        spread: spread.map(|s| s.to_string()),
+        micro_price: micro_price.map(|m| m.to_string()),
         last_update_id,
     };
     serde_json::to_string(&push).ok()

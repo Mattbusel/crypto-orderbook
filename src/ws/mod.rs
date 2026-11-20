@@ -1,4 +1,5 @@
 pub mod binance;
+#[cfg(feature = "service")]
 pub mod client;
 
 // The event type that crosses the channel boundary between the WebSocket
